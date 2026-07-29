@@ -1,0 +1,4 @@
+.env
+ingestion-service/src/generated/
+node_modules/
+dist/

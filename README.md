@@ -81,7 +81,7 @@ Everything else (trip-update feeds, historical reliability windows, bottleneck c
 
 **Feed:** MBTA GTFS-Realtime `VehiclePositions` — https://www.mbta.com/developers/v3-api.
 
-This phase polls the MBTA feed on an interval (every 10–15 seconds), decodes the raw Protobuf payload into a typed JSON object using `protobufjs` or `gtfs-realtime-bindings`, and — deliberately, at this stage — writes it straight into MongoDB. No Kafka yet.
+This phase polls the MBTA feed on an interval (every 10–15 seconds), decodes the raw Protobuf payload into a typed JSON object using `protobufjs`, and — deliberately, at this stage — writes it straight into MongoDB. No Kafka yet.
 
 Skipping Kafka here isn't cutting a corner; it's intentional sequencing. The whole point of this phase is to get a fast feedback loop: see what a real feed actually looks like (field naming quirks, update frequency, how noisy the GPS coordinates are, how MBTA handles missing data) before making any decisions about how that data should be partitioned, buffered, or processed downstream. Adding Kafka before understanding the data would mean designing the event schema blind.
 
@@ -215,9 +215,16 @@ gtfs-realtime-stream-engine/
 │   │   ├── index.ts                # Entry point: starts poller + Express API
 │   │   ├── config.ts               # Poll interval, MBTA key, Mongo URI, Kafka broker
 │   │   │
+│   │   ├── proto/                    # The contract of the proto data
+│   │   │   └── gtfs-realtime.proto        # GTFS Realtime Specification given by Google at github.com/google/transit/tree/master/gtfs-realtime
+│   │   │
+│   │   ├── generated/                    # Files generated using protobufjs-cli
+│   │   │   ├── gtfs-realtime.js          # Static JavaScript file used to encode and decode the MBTA binary data
+│   │   │   └── gtfs-realtime.d.ts        # TypeScript definitions
+│   │   │
 │   │   ├── ingestion/
 │   │   │   ├── poller.ts           # Polls MBTA feed on interval (Phase 1)
-│   │   │   ├── decoder.ts          # Protobuf → typed JSON (protobufjs / gtfs-realtime-bindings)
+│   │   │   ├── decoder.ts          # Protobuf → typed JSON (protobufjs)
 │   │   │   ├── validator.ts        # Validate & skip malformed entries; track per-vehicle last-seen
 │   │   │   └── producer.ts         # Publishes to Kafka raw.vehicle-positions (Phase 2; Phase 1 writes to Mongo directly instead)
 │   │   │

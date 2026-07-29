@@ -1,0 +1,29 @@
+{
+  "name": "ingestion-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "dev": "tsx src/ingestion/poller.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "generate-types": "pbjs -t static-module -w es6 -o src/generated/gtfs-realtime.js src/proto/gtfs-realtime.proto && pbts -o src/generated/gtfs-realtime.d.ts src/generated/gtfs-realtime.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "protobufjs-cli": "^2.6.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "axios": "^1.19.0",
+    "protobufjs": "^8.7.1"
+  }
+}
