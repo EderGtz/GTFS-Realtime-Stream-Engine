@@ -1,10 +1,10 @@
 import { Document } from "mongoose";
 
-export interface IVehicleTelemetry extends Document {
+export interface IVehicleTelemetry {
     vehicle_id: string;
     trip_id: string;
     location: { // GeoJson format
-        type: string;
+        type: 'Point';
         coordinates: number[]; // [longitude, latitude]
     };
     timestamp: Date;

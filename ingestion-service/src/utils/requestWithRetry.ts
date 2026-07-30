@@ -8,7 +8,7 @@ export interface RetryOptions {
   onRetry?: (error: AxiosError, attempt: number, delayMs: number) => void;
 }
 
-const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+export const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 /** Exponential backoff with 80–120% jitter */
 function backoffDelay(baseDelayMs: number, attempt: number): number {

@@ -1,27 +1,49 @@
 import { config } from '../config.js';
+import { VehicleTelemetry } from '../db/vehicle-telemetry.model.js';
 import { requestWithRetry } from '../utils/requestWithRetry.js';
-import { decodeVehiclePositions, type DecodedFeedMessage } from './decoder.js';
-
+import { decodeVehiclePositions } from './decoder.js';
+import { vehiclesWithValidTelemetries } from './validator.js';
+import { wait } from '../utils/requestWithRetry.js'
 
 export async function pollVehiclePositions() {
-    try {
-        const bufferResponse = await requestWithRetry<ArrayBuffer>({ 
-            url: config.mbta.vehiclePositionsUrl,
-            responseType: 'arraybuffer'
-        });
+    console.log("Starting vehicles polling");
 
-        if (!bufferResponse || bufferResponse.byteLength === 0 ) { 
-            throw new Error("Received empty response from MBTA");
+    while (true) {
+        try {
+            const bufferResponse = await requestWithRetry<ArrayBuffer>({ 
+                url: config.mbta.vehiclePositionsUrl,
+                responseType: 'arraybuffer'
+            });
+            if (!bufferResponse || bufferResponse.byteLength === 0 ) { 
+                throw new Error("Received empty response from MBTA");
+            }
+            const vehiclesJson = decodeVehiclePositions(new Uint8Array(bufferResponse));
+            const entities = vehiclesJson.entity || [];
+
+            const telemetries = vehiclesWithValidTelemetries(entities);
+            const validTelemetries = telemetries.validTelemetries;
+            const ommited = telemetries.skippedVehicles;
+            
+            if (validTelemetries.length > 0) {
+
+                const operations = validTelemetries.map(doc => ({
+                    insertOne: { document: doc }
+                }));
+                await VehicleTelemetry.bulkWrite(
+                    operations, 
+                    { 
+                        ordered: false 
+                    });
+
+                console.log(
+                    `${validTelemetries.length} vehicle documents inserted.
+                    ${ommited} documents ommited for malformed data`
+                    );
+            } 
+
+        } catch (error) {
+            console.error("Critical failure during polling cycle: ", error);
         }
-
-        const jsonPayload = decodeVehiclePositions(new Uint8Array(bufferResponse));
-
-        console.log(`Successfully fetched and decoded ${jsonPayload.entity?.length} vehicles.`);
-        return jsonPayload;
-        
-    } catch (error) {
-        console.error("Critical failure during polling cycle: ", error);
-    } finally {
-        setTimeout(pollVehiclePositions, 15_000);
+        await wait(15_000);
     }
 }

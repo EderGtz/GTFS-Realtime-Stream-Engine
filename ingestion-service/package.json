@@ -7,9 +7,9 @@
     "test": "tests"
   },
   "scripts": {
-    "dev": "tsx src/ingestion/poller.ts",
+    "dev": "tsx --env-file=.env src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node --env-file=.env dist/index.js",
     "generate:types": "pbjs -t static-module -w es6 -o src/generated/gtfs-realtime.js src/proto/gtfs-realtime.proto && pbts -o src/generated/gtfs-realtime.d.ts src/generated/gtfs-realtime.js",
     "generate:containers": "cd .. && docker compose up -d"
  
