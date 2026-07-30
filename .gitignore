@@ -2,3 +2,4 @@
 ingestion-service/src/generated/
 node_modules/
 dist/
+*.log

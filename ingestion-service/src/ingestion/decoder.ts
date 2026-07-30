@@ -1,6 +1,6 @@
 import { transit_realtime } from "../generated/gtfs-realtime.js";
 
-interface DecodedVehiclePosition {
+export interface DecodedVehiclePosition {
     id: string;
     vehicle: {
         trip: { 
@@ -23,7 +23,7 @@ interface DecodedVehiclePosition {
     };
 }
 
-interface DecodedFeedMessage {
+export interface DecodedFeedMessage {
     entity: DecodedVehiclePosition[];
 }
 

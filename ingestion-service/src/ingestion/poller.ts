@@ -1,8 +1,9 @@
 import { config } from '../config.js';
 import { requestWithRetry } from '../utils/requestWithRetry.js';
-import { decodeVehiclePositions } from './decoder.js';
+import { decodeVehiclePositions, type DecodedFeedMessage } from './decoder.js';
 
-async function pollVehiclePositions() {
+
+export async function pollVehiclePositions() {
     try {
         const bufferResponse = await requestWithRetry<ArrayBuffer>({ 
             url: config.mbta.vehiclePositionsUrl,
@@ -20,8 +21,7 @@ async function pollVehiclePositions() {
         
     } catch (error) {
         console.error("Critical failure during polling cycle: ", error);
+    } finally {
+        setTimeout(pollVehiclePositions, 15_000);
     }
 }
-
-// Test
-pollVehiclePositions().then(() => console.log("Test execution complete."));

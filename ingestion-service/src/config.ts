@@ -8,5 +8,5 @@ export const config = {
     mbta: {
         vehiclePositionsUrl: "https://cdn.mbta.com/realtime/VehiclePositions.pb",
     },
-    // mongoUri: envOrThrow("MONGO_URI"),
+    mongoUri: envOrThrow("MONGO_URI"),
 };

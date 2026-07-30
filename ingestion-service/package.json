@@ -10,7 +10,9 @@
     "dev": "tsx src/ingestion/poller.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "generate-types": "pbjs -t static-module -w es6 -o src/generated/gtfs-realtime.js src/proto/gtfs-realtime.proto && pbts -o src/generated/gtfs-realtime.d.ts src/generated/gtfs-realtime.js"
+    "generate:types": "pbjs -t static-module -w es6 -o src/generated/gtfs-realtime.js src/proto/gtfs-realtime.proto && pbts -o src/generated/gtfs-realtime.d.ts src/generated/gtfs-realtime.js",
+    "generate:containers": "cd .. && docker compose up -d"
+ 
   },
   "keywords": [],
   "author": "",
@@ -24,6 +26,7 @@
   },
   "dependencies": {
     "axios": "^1.19.0",
+    "mongoose": "^9.9.0",
     "protobufjs": "^8.7.1"
   }
 }
