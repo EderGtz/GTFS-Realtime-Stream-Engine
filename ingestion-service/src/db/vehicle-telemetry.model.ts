@@ -21,4 +21,8 @@ const VehicleTelemetrySchema = new Schema<IVehicleTelemetry>({
 //  2dsphere index for spatial queries
 VehicleTelemetrySchema.index({ location: "2dsphere" });
 
+// If a vehicle reports twice with an identical timestamp (feed hiccup, etc.)
+// it is not inserted twice
+VehicleTelemetrySchema.index({ vehicle_id: 1, timestamp: 1 }, { unique:  true });
+
 export const VehicleTelemetry = mongoose.model<IVehicleTelemetry>('VehicleTelemetry', VehicleTelemetrySchema);

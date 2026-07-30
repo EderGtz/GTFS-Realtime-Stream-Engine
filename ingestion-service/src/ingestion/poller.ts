@@ -22,22 +22,36 @@ export async function pollVehiclePositions() {
 
             const telemetries = vehiclesWithValidTelemetries(entities);
             const validTelemetries = telemetries.validTelemetries;
-            const ommited = telemetries.skippedVehicles;
+            const omitted = telemetries.skippedVehicles;
             
             if (validTelemetries.length > 0) {
 
                 const operations = validTelemetries.map(doc => ({
                     insertOne: { document: doc }
                 }));
-                await VehicleTelemetry.bulkWrite(
-                    operations, 
-                    { 
-                        ordered: false 
-                    });
+
+                try { 
+                    await VehicleTelemetry.bulkWrite(
+                        operations, 
+                        { 
+                            ordered: false 
+                        });
+
+                } catch (error: any) {
+
+                    if (error.code === 11000) {
+                        const duplicated = error.writeErrors.lenght || 0;
+                        const inserted = validTelemetries.length - duplicated;
+                        console.log(`${inserted} new records. ${duplicated} duplicated records omitted`);
+
+                    } else {
+                        console.error("Fatal error while writing to MongoDB: ", error);
+                    }
+                }
 
                 console.log(
                     `${validTelemetries.length} vehicle documents inserted.
-                    ${ommited} documents ommited for malformed data`
+                    ${omitted} documents omitted for malformed data`
                     );
             } 
 
