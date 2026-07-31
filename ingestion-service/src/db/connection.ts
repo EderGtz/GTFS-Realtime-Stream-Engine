@@ -8,7 +8,7 @@ export async function connectToDatabase() {
         logger.info('Successfully connected to MongoDB.');
 
     } catch (error) {
-        console.error('Database connection failed:', error);
+        logger.error({ err: error }, 'Database connection failed');
         process.exit(1);
     }
 }

@@ -51,16 +51,41 @@ async function pollCycle(): Promise<void> {
     logger.info( `${inserted} new records, ${duplicated} duplicates skipped, ${skippedVehicles} malformed vehicles omitted.` );
 }
 
+// wait interval starts doubling until reach 5 min between attempts
+const MAX_BACKOFF_MS = 5 * 60_000;
+const BASE_INTERVAL_MS = 15_000;
+const ALERT_THRESHOLD = 5;
 
 export async function pollVehiclePositions() {
     logger.info("Starting vehicles polling");
+    let consecutiveFailures = 0;
 
     while (true) {
         try {
             await pollCycle();
+
+            if (consecutiveFailures >= ALERT_THRESHOLD) {
+                logger.warn("MBTA feed recovered after sustained failure.");
+            }
+            consecutiveFailures = 0;
+
         } catch (error) {
-            console.error("Critical failure during polling cycle: ", error);
+            consecutiveFailures++;
+            logger.error(
+                { err: error, attempt: consecutiveFailures }, 
+                "Failure during polling cycle."
+            );
+            
+            if (consecutiveFailures >= ALERT_THRESHOLD) {
+                logger.fatal(
+                    "ALERT: MBTA feed has failed 5 consecutive times. Manual intervention may be required."
+                );
+            }
         }
-        await wait(15_000);
+        const waitMs = consecutiveFailures >= ALERT_THRESHOLD
+            ? Math.min(BASE_INTERVAL_MS * 2 ** (consecutiveFailures - ALERT_THRESHOLD), MAX_BACKOFF_MS) 
+            : BASE_INTERVAL_MS;
+
+        await wait(waitMs);
     }
 }
