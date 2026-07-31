@@ -79,30 +79,41 @@ Everything else (trip-update feeds, historical reliability windows, bottleneck c
 
 **Goal: get real data flowing end-to-end as fast as possible, with real failure handling from day one.**
 
-**Feed:** MBTA GTFS-Realtime `VehiclePositions` — https://www.mbta.com/developers/v3-api.
+**Feed:** MBTA GTFS-Realtime `VehiclePositions` — https://cdn.mbta.com/realtime/VehiclePositions.pb
 
-This phase polls the MBTA feed on an interval (every 10–15 seconds), decodes the raw Protobuf payload into a typed JSON object using `protobufjs`, and — deliberately, at this stage — writes it straight into MongoDB. No Kafka yet.
+This phase polls the MBTA feed on a 15-second interval, decodes the raw Protobuf payload into a typed JSON object using `protobufjs`, and writes it straight into MongoDB. No Kafka yet.
 
-Skipping Kafka here isn't cutting a corner; it's intentional sequencing. The whole point of this phase is to get a fast feedback loop: see what a real feed actually looks like (field naming quirks, update frequency, how noisy the GPS coordinates are, how MBTA handles missing data) before making any decisions about how that data should be partitioned, buffered, or processed downstream. Adding Kafka before understanding the data would mean designing the event schema blind.
+Skipping Kafka here isn't cutting a corner; it's intentional sequencing. The whole point of this phase is to get a fast feedback loop: see what a real feed actually looks like before making any decisions about how that data should be partitioned, buffered, or processed downstream. 
 
-**Failure-mode behavior:**
-- Malformed or partial feed entries are logged and skipped — one bad message never crashes the poller.
-- After N consecutive poll failures (e.g. 5), log a clear error/alert rather than failing silently or retrying forever unnoticed.
-- Track a per-vehicle last-seen timestamp so a vehicle that stops reporting mid-service can eventually be flagged as stale, not just silently absent (full silent-vehicle detection is future work — see below — but the timestamp needs to exist from Phase 1 so that data isn't missing retroactively).
+**Implementation Details:**
+- **Validation:** Enforces strict GeoJSON formatting and drops vehicles lacking mandatory coordinates or IDs to ensure clean data for downstream analytics.
+- **Idempotency:** Implements a MongoDB Compound Unique Index (`vehicle_id` + `timestamp`) combined with unordered `bulkWrite()` operations. This ensures that feed hiccups (MBTA broadcasting the exact same payload twice) are silently deduplicated at the database level without crashing the ingestion loop.
+- **Observability:** Replaced standard console logs with `pino` for structured, leveled JSON logging.
+- **Failure-mode behavior:**
+  - Malformed or partial feed entries are logged and skipped — one bad message never crashes the poller.
+  - After 5 consecutive poll failures, the poller triggers a `fatal` alert log rather than failing silently or retrying forever unnoticed.
 
 **Testing & CI:**
-- Unit tests that covers the Protobuf decode step against a captured sample payload (a saved fixture file), independent of live network access.
-- GitHub Actions workflow runs that test suite on push.
+- Unit tests written in `vitest` cover the Protobuf decode step and validation logic against a captured sample payload (`fixtures/mbta_feed.pb`), independent of live network access.
+- GitHub Actions workflow runs the test suite on every push.
 
 **Acceptance criteria (pass/fail):**
-- [ ] Polls the MBTA feed on interval without crashing for a sustained unattended run (target: 1 hour+). 
-- [ ] Decodes raw Protobuf into typed JSON with zero unhandled decode exceptions across that run
-- [ ] Malformed/partial entries are logged and skipped, never fatal
-- [ ] Writes valid documents to MongoDB with correct `vehicle_id`, `trip_id`, `lat`/`lon`, `timestamp`
-- [ ] Unit tests passes against a captured fixture payload
-- [ ] CI workflow runs the test suite successfully on push
+- [X] Polls the MBTA feed on interval without crashing for a sustained unattended run (target: 1 hour+). 
+- [X] Decodes raw Protobuf into typed JSON with zero unhandled decode exceptions across that run
+- [X] Malformed/partial entries are logged and skipped, never fatal
+- [X] Writes valid documents to MongoDB with correct `vehicle_id`, `trip_id`, `lat`/`lon`, `timestamp`
+- [X] Unit tests passes against a captured fixture payload
+- [X] CI workflow runs the test suite successfully on push
 
 By the end of Phase 1, there should be a small but real collection of live vehicle position documents in MongoDB, pulled from MBTA, decoded from raw binary Protobuf — proof that the hardest part (talking to a real, undocumented-in-practice binary feed, with real failure handling) works.
+
+#### Live Demo
+
+![Terminal Ingestion Demo](docs/phase1_demo.gif)
+*Live ingestion logs filtering duplicates and malformed data.*
+
+![MongoDB Telemetry View](docs/phase1_mongo.png)
+*VSCode MongoDB extension showing the 2dsphere indexed telemetry documents.*
 
 ### Phase 2 — Event Streaming Layer (Apache Kafka)
 
