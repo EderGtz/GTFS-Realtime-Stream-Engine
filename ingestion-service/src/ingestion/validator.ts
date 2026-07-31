@@ -44,9 +44,22 @@ export function vehiclesWithValidTelemetries(
             continue;
         }
 
+        const vehicleId = vehicle.vehicle?.id;
+        if (!vehicleId) {
+            skippedVehicles++;
+            continue;
+        }
+
+        const validTimestamp = Number(vehicle.timestamp);
+        if (!Number.isFinite(validTimestamp)) {
+            skippedVehicles++;
+            continue;
+        }
+
         validTelemetries.push({
-            vehicle_id: vehicle.vehicle?.id || "UNKNOWN",
-            trip_id: vehicle.trip.tripId || "UNKNOWN",
+            vehicle_id: vehicleId,
+            trip_id: vehicle.trip.tripId ?? null,
+            route_id: vehicle.trip.routeId ?? null,
             location: {
                 type: "Point",
                 coordinates: [
