@@ -5,6 +5,7 @@ import { decodeVehiclePositions } from './decoder.js';
 import { vehiclesWithValidTelemetries } from './validator.js';
 import { wait } from '../utils/requestWithRetry.js'
 import type { IVehicleTelemetry } from '../db/vehicle-telemetry.interface.js';
+import { logger } from '../utils/logger.js';
 
 async function fetchFeedBuffer(): Promise<ArrayBuffer> {
     const buffer = await requestWithRetry<ArrayBuffer>({
@@ -47,14 +48,12 @@ async function pollCycle(): Promise<void> {
     const { validTelemetries, skippedVehicles } = vehiclesWithValidTelemetries(entities);
     const { inserted, duplicated } = await storeTelemetries(validTelemetries);
 
-    console.log(
-        `${inserted} new records, ${duplicated} duplicates skipped, ${skippedVehicles} malformed vehicles omitted.`
-    );
+    logger.info( `${inserted} new records, ${duplicated} duplicates skipped, ${skippedVehicles} malformed vehicles omitted.` );
 }
 
 
 export async function pollVehiclePositions() {
-    console.log("Starting vehicles polling");
+    logger.info("Starting vehicles polling");
 
     while (true) {
         try {

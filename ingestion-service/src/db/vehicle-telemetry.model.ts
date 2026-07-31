@@ -25,4 +25,7 @@ VehicleTelemetrySchema.index({ location: "2dsphere" });
 // it is not inserted twice
 VehicleTelemetrySchema.index({ vehicle_id: 1, timestamp: 1 }, { unique:  true });
 
+// For testing: deletes records 7 days after their timestamp (preventing running out of memory) 
+VehicleTelemetrySchema.index({ timestamp: 1 }, { expireAfterSeconds: 604800 });
+
 export const VehicleTelemetry = mongoose.model<IVehicleTelemetry>('VehicleTelemetry', VehicleTelemetrySchema);
