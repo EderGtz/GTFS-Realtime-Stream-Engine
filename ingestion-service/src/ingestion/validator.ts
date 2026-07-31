@@ -21,10 +21,21 @@ type VehicleWithPosition = NonNullable<DecodedVehiclePosition["vehicle"]> & {
 export function hasValidPosition(
     vehicle: DecodedVehiclePosition["vehicle"]
 ):  vehicle is VehicleWithPosition {
-    return !!vehicle 
-        && !!vehicle.position 
-        && Number.isFinite(vehicle.position.latitude) 
-        && Number.isFinite(vehicle.position.longitude)
+
+    if (!vehicle || !vehicle.position ) return false;
+
+    const lat = vehicle.position.latitude;
+    const lon = vehicle.position.longitude;
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return false;
+    }
+
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        return false;
+    }
+
+    return true;
 }
 
 export function vehiclesWithValidTelemetries(
@@ -58,8 +69,8 @@ export function vehiclesWithValidTelemetries(
 
         validTelemetries.push({
             vehicle_id: vehicleId,
-            trip_id: vehicle.trip.tripId ?? null,
-            route_id: vehicle.trip.routeId ?? null,
+            trip_id: vehicle.trip?.tripId ?? null,
+            route_id: vehicle.trip?.routeId ?? null,
             location: {
                 type: "Point",
                 coordinates: [
