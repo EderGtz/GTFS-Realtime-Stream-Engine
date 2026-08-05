@@ -1,0 +1,29 @@
+name: CI GTFS Streaming
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+
+    env:
+      MONGO_PORT: 27017
+      KAFKA_PORT: 9092
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose
+        run: docker compose config -q
+
+      - name: Wait for Healthchecks
+        run: docker compose up -d --wait
+
+      - name: Turn off containers
+        if: always()
+        run: docker compose down -v
