@@ -50,6 +50,14 @@ The goal is to build a real, working end-to-end event-driven system using real p
                            no frontend in this MVP)
 ```
 
+The GTFS-Realtime Stream Engine is a decoupled, event-driven pipeline designed to ingest, process, and serve public transit telemetry at scale. The architecture is divided into five distinct layers:
+
+1. **Ingestion Layer (Node.js / TypeScript):** A lightweight, fault-tolerant service that polls the MBTA's raw binary Protobuf feed. It handles schema decoding, spatial validation, and data cleaning. Instead of writing directly to a database, it acts purely as a Kafka Producer.
+2. **Streaming Layer (Apache Kafka - KRaft Mode):** It uses a single Kafka broker running in KRaft mode (acting as both broker and controller). It buffers the incoming telemetry into a topic (`raw.vehicle-positions`) with 4 partitions, effectively decoupling the high-frequency ingestion from the heavy analytical processing.
+3. **Analytics Engine (Python / Pandas):** A dedicated Kafka Consumer that reads telemetry in batches. It loads static GTFS schedules into memory, performs spatial and temporal joins, and calculates high-value metrics like schedule deviation and vehicle bunching.
+4. **Storage Layer (MongoDB):** Acts as a sink for the processed analytics. It utilizes `2dsphere` indexes to allow for future geospatial querying of delays and bottlenecks.
+5. **Serving API (Node.js / Express):** A thin REST interface that reads the processed metrics from MongoDB and serves them to end clients, completely isolated from the complexities of the ingestion and processing pipelines.
+
 ## Tech Stack
 
 | Layer | Technology | Responsibility |
@@ -124,6 +132,8 @@ Once Phase 1 has produced real, inspected data, the ingestion service is refacto
 - Ingestion can keep polling at its own pace even if analytics processing is temporarily slow or down.
 - A feed hiccup or MBTA outage doesn't take down anything else in the system.
 - More consumers can be added later (an alerting service, a logging service, a second analytics variant) without ever touching the ingestion code again.
+
+It is relevant to mention that this phase **does not keep track** of duplicated records as the phase 1 due the way Kafka works. The responsability has moved downstream, and the consumer functions will verify this cases.
 
 **Testing:** test that verifies a message published to `raw.vehicle-positions` matches the expected schema — catches a schema drift before it silently breaks the analytics engine in Phase 3.
 
@@ -363,6 +373,27 @@ flowchart TD
 
 *(Dashed arrows show CI and deployment applying across all four build phases, closed out in Phase 5.)*
 
-## Status
+---
 
-🚧 Early build — Phase 1 in progress. Feed selected (MBTA). Ready to implement per the phases above.
+## ADRs
+
+
+### Why use `vehicle_id` as the partition key?
+
+Messages published to the `raw.vehicle-positions` topic are partitioned by the `vehicle_id`. This guarantees strict chronological ordering for telemetry belonging to the same physical vehicle. Simultaneously, it still allows for horizontal scaling and parallel processing across different vehicles, ensuring that data is both accurate and rapidly processed.
+
+### Why default to 4 partitions for a single-broker MVP?
+
+Even though the MVP runs on a single Kafka broker, the topic is initialized with 4 partitions. This decision ensures the architecture is already prepared to grow. When horizontal scalability is needed, new analytics consumers can be added to the consumer group, and Kafka will automatically rebalance the partitions across the new instances without requiring a topic recreation or downtime.
+
+### Why use different Consumer Groups (e.g., Analytics and Alerting/Debug)?
+
+Utilizing distinct consumer groups demonstrates that Kafka truly decouples consumers. By assigning the Python analytics engine to one group and an alerting/debug service to another, they process the exact same event stream completely independently. You can shut down the Analytics consumer and the Debug consumer will continue working uninterrupted.
+
+### Why use KRaft instead of ZooKeeper?
+
+The system utilizes KRaft (Kafka Raft) by configuring `KAFKA_PROCESS_ROLES=broker,controller`. This modern configuration eliminates the need for an external ZooKeeper dependency, allowing the node to manage its own metadata. It reduces the infrastructure footprint for deployment while proving an understanding of how the modern mode of Kafka works.
+
+### Why decouple ingestion from processing via Kafka?
+
+In traditional architectures, the ingestion service writes directly to the database. By placing Kafka in the middle, this system implements true backpressure. If the Python analytics engine crashes, requires a deployment, or gets bogged down by heavy Pandas computations, the Node.js ingestion service is unaffected. It continues to poll the MBTA feed at its 15-second interval, buffering the data in Kafka until the analytics engine recovers.
