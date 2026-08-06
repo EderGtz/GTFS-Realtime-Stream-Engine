@@ -4,9 +4,18 @@ function envOrThrow(key: string): string {
     return value;
 }
 
+type DBConfig = {
+    mongoUri: string
+};
+
 export const config = {
     mbta: {
         vehiclePositionsUrl: "https://cdn.mbta.com/realtime/VehiclePositions.pb",
     },
-    mongoUri: envOrThrow("MONGO_URI"),
+    kafka: {
+        brokers: [envOrThrow("KAFKA_BROKER") ?? "localhost:9092"],
+        topic: "raw.vehicle-positions",
+        numPartitions: 4
+    },
+    // mongoUri: envOrThrow("MONGO_URI"),
 };

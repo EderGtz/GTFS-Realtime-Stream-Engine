@@ -1,20 +1,31 @@
-import { Kafka, type Admin } from 'kafkajs';
+import { Kafka, type Admin, type Producer } from 'kafkajs';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import type { IVehicleTelemetry } from '../db/vehicle-telemetry.interface.js';
 
 const kafka = new Kafka({
     clientId: 'ingestion-service',
     brokers: config.kafka.brokers,
 });
 
-async function connectWithRetry(admin: Admin, attempts = 5, delayMs = 3000) {
+const producer: Producer = kafka.producer();
+let producerConnected = false;
+
+async function connectWithRetry(
+    connectFn: () => Promise<void>, 
+    label: string,
+    attempts = 5, 
+    delayMs = 3000
+): Promise<void> {
     for (let attempt = 1; attempt <= attempts; attempt++) {
         try {
-            await admin.connect();
+            await connectFn();
             return;
         } catch (err) {
             if (attempt === attempts) throw err;
-            logger.warn(`Kafka admin connect failed (attempt ${attempt}/${attempts}), retrying...`);
+            logger.warn(
+                `${label} connect failed (attempt ${attempt}/${attempts}), retrying...`
+            );
             await new Promise(res => setTimeout(res, delayMs));
         }
     }
@@ -22,7 +33,7 @@ async function connectWithRetry(admin: Admin, attempts = 5, delayMs = 3000) {
 
 export async function setupKafka() {
     const admin = kafka.admin();
-    await connectWithRetry(admin);
+    await connectWithRetry(() => admin.connect(), "Kafka admin");
 
     try {
         const created = await admin.createTopics({
@@ -38,6 +49,29 @@ export async function setupKafka() {
     } finally {
         await admin.disconnect();
     }
+    await connectWithRetry(() => producer.connect(), "Kafka producer");
+    producerConnected = true;
 }
 
-export { kafka };
+export async function publishTelemetries(
+    validTelemetries: Array<IVehicleTelemetry>
+): Promise<{ published: number }> {
+
+    if (validTelemetries.length === 0) return { published: 0 };
+
+    await producer.send({
+        topic: config.kafka.topic,
+        messages: validTelemetries.map(t => ({
+            key: t.vehicle_id, // partitions by vehicle
+            value: JSON.stringify(t),
+        })),
+    });
+    return { published: validTelemetries.length }
+}
+
+export async function disconnectKafka() {
+    if (producerConnected) {
+        await producer.disconnect();
+        producerConnected = false;
+    }
+}
