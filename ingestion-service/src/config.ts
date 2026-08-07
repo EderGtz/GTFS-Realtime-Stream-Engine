@@ -8,7 +8,7 @@ try {
 
 function envOrThrow(key: string): string {
     const value = process.env[key];
-    if (!value) throw new Error("Could not find mandatory environment variable: ${key}");
+    if (!value) throw new Error(`Could not find mandatory environment variable: ${key}`);
     return value;
 }
 
@@ -17,9 +17,9 @@ export const config = {
         vehiclePositionsUrl: "https://cdn.mbta.com/realtime/VehiclePositions.pb",
     },
     kafka: {
-        brokers: [process.env.KAFKA_BROKER ?? envOrThrow("KAFKA_BROKER")],
+        brokers: [envOrThrow("KAFKA_BROKER")],
         topic: "raw.vehicle-positions",
         numPartitions: 4,
     },
-    mongoUri: process.env.MONGO_URI ?? envOrThrow("MONGO_URI"),
+    mongoUri: envOrThrow("MONGO_URI"),
 };

@@ -1,4 +1,19 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
+import { requestWithRetry, wait } from "../src/utils/requestWithRetry.js";
+import { decodeVehiclePositions } from "../src/ingestion/decoder.js";
+import { vehiclesWithValidTelemetries } from "../src/ingestion/validator.js";
+import { setupKafka, publishTelemetries } from "../src/ingestion/producer.js";
+import { logger } from "../src/utils/logger.js";
+
+
+vi.mock("../src/config.js", () => ({
+    config: {
+        mbta: { vehiclePositionsUrl: "https://fake.test/VehiclePositions.pb" },
+        kafka: { brokers: ["fake-broker:9092"], topic: "raw.vehicle-positions", numPartitions: 4 },
+    },
+}));
+
+import * as poller from "../src/ingestion/poller.js";
 
 vi.mock("../src/utils/requestWithRetry.js", () => ({
     requestWithRetry: vi.fn(),
@@ -18,12 +33,6 @@ vi.mock("../src/utils/logger.js", () => ({
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn() },
 }));
 
-import { requestWithRetry, wait } from "../src/utils/requestWithRetry.js";
-import { decodeVehiclePositions } from "../src/ingestion/decoder.js";
-import { vehiclesWithValidTelemetries } from "../src/ingestion/validator.js";
-import { setupKafka, publishTelemetries } from "../src/ingestion/producer.js";
-import { logger } from "../src/utils/logger.js";
-import * as poller from "../src/ingestion/poller.js";
 
 beforeEach(() => {
     vi.clearAllMocks();
