@@ -8,7 +8,7 @@ const kafka = new Kafka({
     brokers: config.kafka.brokers,
 });
 
-const producer: Producer = kafka.producer();
+const producer: Producer = kafka.producer({ idempotent: true });
 let producerConnected = false;
 
 async function connectWithRetry(
