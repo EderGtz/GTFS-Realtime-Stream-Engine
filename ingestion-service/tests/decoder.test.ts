@@ -5,7 +5,7 @@ import path from "node:path";
 import { decodeVehiclePositions } from "../src/ingestion/decoder.js";
 import { vehiclesWithValidTelemetries } from "../src/ingestion/validator.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = import.meta.dirname; 
 const FIXTURE_PATH = path.join(__dirname, "fixtures", "mbta_feed.pb");
 
 describe("decodeVehiclePositions", () => {

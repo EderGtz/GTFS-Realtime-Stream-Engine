@@ -1,5 +1,17 @@
+# Environment variables
 .env
-ingestion-service/src/generated/
+.env.*
+
+# Dependencies
 node_modules/
+
+# Build and compilation outputs
 dist/
+build/
+
+# Generated code and API schemas
+ingestion-service/src/generated/
+
+# Logs and debug files
 *.log
+npm-debug.log*
