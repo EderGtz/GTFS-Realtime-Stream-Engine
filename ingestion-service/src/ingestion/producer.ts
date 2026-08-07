@@ -1,4 +1,4 @@
-import { Kafka, type Admin, type Producer } from 'kafkajs';
+import { Kafka, Partitioners, type Admin, type Producer } from 'kafkajs';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { IVehicleTelemetry } from '../db/vehicle-telemetry.interface.js';
@@ -8,7 +8,10 @@ const kafka = new Kafka({
     brokers: config.kafka.brokers,
 });
 
-const producer: Producer = kafka.producer({ idempotent: true });
+const producer: Producer = kafka.producer({ 
+    idempotent: true,
+    createPartitioner: Partitioners.DefaultPartitioner,
+});
 let producerConnected = false;
 
 async function connectWithRetry(
