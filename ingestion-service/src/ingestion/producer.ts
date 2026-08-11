@@ -56,6 +56,11 @@ export async function setupKafka() {
     producerConnected = true;
 }
 
+/**
+ * - event_timestamp tells when MBTA says the position was valid.
+ * - ingested_at tells feed freshness, transport latency, and processing lag.
+ * - agency_id avoids a future migration when adding providers.
+ */
 export async function publishTelemetries(
     validTelemetries: Array<IVehicleTelemetry>
 ): Promise<{ published: number }> {
@@ -66,7 +71,12 @@ export async function publishTelemetries(
         topic: config.kafka.topic,
         messages: validTelemetries.map(t => ({
             key: t.vehicle_id, // partitions by vehicle
-            value: JSON.stringify(t),
+            value: JSON.stringify({
+                agency_id: "mbta",
+                ...t,
+                event_timestamp: t.timestamp,
+                ingested_at: new Date().toISOString
+            }),
         })),
     });
     return { published: validTelemetries.length }
