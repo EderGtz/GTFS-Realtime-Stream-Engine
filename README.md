@@ -138,9 +138,20 @@ It is relevant to mention that this phase **does not keep track** of duplicated 
 **Testing:** test that verifies a message published to `raw.vehicle-positions` matches the expected schema — catches a schema drift before it silently breaks the analytics engine in Phase 3.
 
 **Acceptance criteria:**
-- [ ] Ingestion service publishes decoded messages to `raw.vehicle-positions` instead of writing directly to Mongo
-- [ ] A basic consumer can read and correctly parse messages off the topic
-- [ ] CI runs both the decode test (Phase 1) and the schema test (Phase 2)
+- [x] Ingestion service publishes decoded messages to `raw.vehicle-positions` instead of writing directly to Mongo
+- [x] A basic consumer can read and correctly parse messages off the topic
+- [x] CI runs both the decode test (Phase 1) and the schema test (Phase 2)
+
+#### Live Demo
+
+![Docker Compose and live ingestion](docs/phase2_compose.gif)
+*Starts the GTFS streaming stack with Docker Compose, waits for Kafka to become healthy, then launches the ingestion service, continuously publishing MBTA vehicle telemetry.*
+
+![Kafka round-trip integration test](docs/phase2_roundtrip.gif)
+*Runs the Kafka round-trip integration test against the real broker. A test telemetry message is published through the production Kafka pipeline, consumed from raw.vehicle-positions, parsed as JSON, and validated against the expected schema.*
+
+![Kafka round-trip integration test](docs/phase2_kafkaUI.png)
+*Kafbat UI showing the raw.vehicle-positions Kafka topic populated with telemetry messages.*
 
 ### Phase 3 — Analytics Engine (Python + pandas)
 
@@ -262,8 +273,13 @@ gtfs-realtime-stream-engine/
 │   │       └── logger.ts           # Structured logging (poll failures, decode errors)
 │   │
 │   └── tests/
-│       ├── decoder.test.ts         # Phase 1 — decode fixture payload
-│       ├── producer.test.ts        # Phase 2 — schema published to Kafka
+│       ├── decoder.test.ts
+│       ├── producer.test.ts
+        ├── config.test.ts
+        ├── decoder.test.ts
+        ├── poller.test.ts
+        ├── setup-kafka.test.ts
+        ├── validator.test.ts
 │       └── api/
 │           └── delays.test.ts      # Phase 4 — integration test, seeded test DB
 │
