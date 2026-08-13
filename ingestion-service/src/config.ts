@@ -21,5 +21,5 @@ export const config = {
         topic: "raw.vehicle-positions",
         numPartitions: 4,
     },
-    mongoUri: envOrThrow("MONGO_URI"),
+    mongoUri: "",
 };
