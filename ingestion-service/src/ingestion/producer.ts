@@ -34,21 +34,29 @@ async function connectWithRetry(
     }
 }
 
+export async function setupTopics(admin: Admin) {
+    const topics = await admin.listTopics();
+
+    if(!topics.includes(config.kafka.topic)) {
+        await admin.createTopics({
+            topics: [{
+                topic: config.kafka.topic,
+                numPartitions: config.kafka.numPartitions,
+                replicationFactor: 1,
+            }],
+        });
+        logger.info(`Topic '${config.kafka.topic}' created.`);
+    } else {
+        logger.info(`Topic '${config.kafka.topic}' already exists.`);
+    }
+}
+
 export async function setupKafka() {
     const admin = kafka.admin();
     await connectWithRetry(() => admin.connect(), "Kafka admin");
 
     try {
-        const created = await admin.createTopics({
-            topics: [{
-                topic: config.kafka.topic,
-                numPartitions: config.kafka.numPartitions,
-                replicationFactor: 1
-            }]
-        });
-        logger.info(created
-            ? `Topic '${config.kafka.topic}' created.`
-            : `Topic '${config.kafka.topic}' already exists.`);
+        await setupTopics(admin);
     } finally {
         await admin.disconnect();
     }
@@ -75,7 +83,7 @@ export async function publishTelemetries(
                 agency_id: "mbta",
                 ...t,
                 event_timestamp: t.timestamp,
-                ingested_at: new Date().toISOString
+                ingested_at: new Date().toISOString()
             }),
         })),
     });

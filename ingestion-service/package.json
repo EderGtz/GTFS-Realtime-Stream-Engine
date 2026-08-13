@@ -12,7 +12,8 @@
     "start": "node --env-file=.env dist/index.js",
     "generate:types": "mkdir -p src/generated && pbjs -t static-module -w es6 -o src/generated/gtfs-realtime.js src/proto/gtfs-realtime.proto && pbts -o src/generated/gtfs-realtime.d.ts src/generated/gtfs-realtime.js",
     "generate:containers": "cd .. && docker compose up -d",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify:kafka": "tsx scripts/verify-kafka-roundtrip.ts"
   },
   "keywords": [],
   "author": "",

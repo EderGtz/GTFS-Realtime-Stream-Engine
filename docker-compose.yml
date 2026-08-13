@@ -8,6 +8,12 @@ services:
       - "${MONGO_PORT:-27017}:27017"
     volumes:
       - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   kafka:
     image: apache/kafka:3.9.0
@@ -52,7 +58,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 25s
 
   kafkabat-ui:
     image: ghcr.io/kafbat/kafka-ui:latest

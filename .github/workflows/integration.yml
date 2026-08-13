@@ -13,6 +13,8 @@ jobs:
     env:
       MONGO_PORT: 27017
       KAFKA_PORT: 9092
+      KAFKA_BROKER: localhost:9092
+      MONGO_URI: mongodb://localhost:27017/gtfs
 
     steps:
       - name: Checkout repository
@@ -21,8 +23,25 @@ jobs:
       - name: Validate Docker Compose
         run: docker compose config -q
 
-      - name: Wait for Healthchecks
+      - name: Wait for Healthchecks (Kafka + Mongo)
         run: docker compose up -d --wait
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        working-directory: ./ingestion-service
+        run: npm install
+
+      - name: Generate Protobuf types
+        working-directory: ./ingestion-service
+        run: npm run generate:types
+
+      - name: Verify a real message round-trips through Kafka
+        working-directory: ./ingestion-service
+        run: npm run verify:kafka
 
       - name: Turn off containers
         if: always()
