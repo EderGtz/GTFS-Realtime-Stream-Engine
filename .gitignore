@@ -15,3 +15,8 @@ ingestion-service/src/generated/
 # Logs and debug files
 *.log
 npm-debug.log*
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+MBTA_GTFS/
