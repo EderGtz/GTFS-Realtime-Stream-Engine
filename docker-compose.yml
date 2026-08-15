@@ -5,7 +5,7 @@ services:
     image: mongo:latest
     container_name: gtfs_mongodb
     ports:
-      - "${MONGO_PORT:-27017}:27017"
+      - "127.0.0.1:${MONGO_PORT:-27017}:27017"
     volumes:
       - mongodb_data:/data/db
     healthcheck:
@@ -21,7 +21,7 @@ services:
     hostname: kafka
     restart: unless-stopped
     ports:
-      - "${KAFKA_PORT:-9092}:9092"
+      - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
     environment:
       # Kraft settings 
       KAFKA_NODE_ID: 1
@@ -64,7 +64,7 @@ services:
     image: ghcr.io/kafbat/kafka-ui:latest
     container_name: kafkabat_ui
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: GTFS Cluster
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
