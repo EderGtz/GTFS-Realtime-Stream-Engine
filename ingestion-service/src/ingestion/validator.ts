@@ -71,14 +71,22 @@ export function vehiclesWithValidTelemetries(
             vehicle_id: vehicleId,
             trip_id: vehicle.trip?.tripId ?? null,
             route_id: vehicle.trip?.routeId ?? null,
+            timestamp: new Date(Number(vehicle.timestamp) *  1000),
+
             location: {
                 type: "Point",
                 coordinates: [
                     vehicle.position.longitude,
                     vehicle.position.latitude
-                ]
+                ],
             },
-            timestamp: new Date(Number(vehicle.timestamp) *  1000)
+
+            bearing: vehicle.position.bearing ?? null,
+            speed: vehicle.position.speed ?? null,
+
+            current_stop_sequence: vehicle.currentStopSequence ?? null,
+            stop_id: vehicle.stopId ?? null,
+            current_status: vehicle.currentStatus ?? null,
         });
     }
     return { validTelemetries, skippedVehicles };

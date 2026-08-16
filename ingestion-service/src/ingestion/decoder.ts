@@ -18,8 +18,11 @@ export interface DecodedVehiclePosition {
             bearing?: number; 
             speed?: number 
         };
-        currentStatus?: string;   // enums: String -> real strings like "IN_TRANSIT_TO"
-        timestamp?: string;       // longs: String -> not Long objects
+        currentStopSequence?: number;
+        stopId?: string;
+        currentStatus?: string;
+        
+        timestamp?: string;
     };
 }
 
