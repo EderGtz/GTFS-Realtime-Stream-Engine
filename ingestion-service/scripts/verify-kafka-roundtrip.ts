@@ -12,9 +12,8 @@
 */
 
 import { Kafka } from 'kafkajs';
-import { config } from '../src/config.js';
+import { config, type IVehicleTelemetry } from '../src/config.js';
 import { setupKafka, publishTelemetries, disconnectKafka } from '../src/ingestion/producer.js';
-import type { IVehicleTelemetry } from '../src/db/vehicle-telemetry.interface.js';
 
 const TIMEOUT_MS = 20_000;
 

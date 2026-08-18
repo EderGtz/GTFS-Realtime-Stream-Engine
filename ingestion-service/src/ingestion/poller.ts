@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { requestWithRetry } from '../utils/requestWithRetry.js';
-import { decodeVehiclePositions } from './decoder.js';
+import { decodeFeedMessage } from './decoder.js';
 import { vehiclesWithValidTelemetries } from './validator.js';
 import { wait } from '../utils/requestWithRetry.js'
 import { logger } from '../utils/logger.js';
@@ -18,7 +18,7 @@ export async function fetchFeedBuffer(): Promise<ArrayBuffer> {
 }
 
 export function decodeFeed(buffer: ArrayBuffer) {
-    const vehiclesJson = decodeVehiclePositions(new Uint8Array(buffer));
+    const vehiclesJson = decodeFeedMessage(new Uint8Array(buffer));
     return vehiclesJson.entity ?? [];
 }
 

@@ -1,4 +1,4 @@
-import type { IVehicleTelemetry } from "../db/vehicle-telemetry.interface.js";
+import type { IVehicleTelemetry } from "../config.js";
 import type { DecodedVehiclePosition } from "./decoder.js";
 
 /**

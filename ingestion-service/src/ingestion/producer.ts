@@ -1,7 +1,6 @@
 import { Kafka, Partitioners, type Admin, type Producer } from 'kafkajs';
-import { config } from '../config.js';
+import { config, type IVehicleTelemetry } from '../config.js';
 import { logger } from '../utils/logger.js';
-import type { IVehicleTelemetry } from '../db/vehicle-telemetry.interface.js';
 
 const kafka = new Kafka({
     clientId: 'ingestion-service',
@@ -65,7 +64,6 @@ export async function setupKafka() {
 }
 
 /**
- * - event_timestamp tells when MBTA says the position was valid.
  * - ingested_at tells feed freshness, transport latency, and processing lag.
  * - agency_id avoids a future migration when adding providers.
  */
@@ -82,7 +80,6 @@ export async function publishTelemetries(
             value: JSON.stringify({
                 agency_id: "mbta",
                 ...t,
-                event_timestamp: t.timestamp,
                 ingested_at: new Date().toISOString()
             }),
         })),
