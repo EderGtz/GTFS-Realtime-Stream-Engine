@@ -1,4 +1,4 @@
-import pino, { destination } from 'pino';
+import pino from 'pino';
 
 export const logger = pino({
     level: process.env.LOG_LEVEL || 'info',
@@ -17,6 +17,12 @@ export const logger = pino({
                 options: {
                     destination: './logs/ingestion.log',
                     mkdir: true,
+
+                    frequency: 'daily',
+                    extension: '.log',
+                    limit: {
+                        count: 7
+                    }
                 }
             }
         ]
