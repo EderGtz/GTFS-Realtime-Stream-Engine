@@ -39,9 +39,9 @@ jobs:
         working-directory: ./ingestion-service
         run: npm run generate:types
 
-      - name: Verify a real message round-trips through Kafka
+      - name: Run Kafka Integration Test
         working-directory: ./ingestion-service
-        run: npm run verify:kafka
+        run: npx vitest run tests/integration/
 
       - name: Turn off containers
         if: always()
