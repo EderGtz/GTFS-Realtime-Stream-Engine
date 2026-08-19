@@ -1,4 +1,4 @@
-name: CI GTFS Streaming
+name: "CI: Kafka Integration"
 
 on:
   push:
@@ -8,8 +8,8 @@ on:
 
 jobs:
   integration-tests:
+    name: Docker Roundtrip
     runs-on: ubuntu-latest
-
     env:
       MONGO_PORT: 27017
       KAFKA_PORT: 9092

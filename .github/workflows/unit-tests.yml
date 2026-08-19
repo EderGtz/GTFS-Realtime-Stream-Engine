@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: "CI: Unit Tests"
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
 
 jobs:
   test-ingestion:
+    name: TypeScript Logic
     runs-on: ubuntu-latest
     defaults:
       run:
