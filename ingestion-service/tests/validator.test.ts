@@ -114,4 +114,64 @@ describe("vehiclesWithValidTelemetries", () => {
     expect(validTelemetries).toHaveLength(0);
     expect(skippedVehicles).toBe(1);
   });
+
+  test("safely parses omitted optional fields as null without skipping the vehicle", () => {
+    // We only have lat, lon y timestamp
+    const entity = makeVehicleEntity({
+      position: { latitude: 42.35, longitude: -71.05 },
+      currentStopSequence: undefined,
+      stopId: undefined,
+      currentStatus: undefined,
+    } as any);
+
+    const { validTelemetries, skippedVehicles } = vehiclesWithValidTelemetries([entity]);
+
+    expect(skippedVehicles).toBe(0);
+    expect(validTelemetries).toHaveLength(1);
+
+    const telemetry = validTelemetries[0];
+    expect(telemetry).toBeDefined();
+    
+    if (telemetry) {
+        expect(telemetry.vehicle_id).not.toBeNull();
+        expect(telemetry.speed).toBeNull();
+        expect(telemetry.bearing).toBeNull();
+        expect(telemetry.current_stop_sequence).toBeNull();
+        expect(telemetry.stop_id).toBeNull();
+        expect(telemetry.current_status).toBeNull();
+    }
+  });
+
+  test("accepts invalid physical values", () => {
+    const entity = makeVehicleEntity({
+      position: { 
+        latitude: 42.35, 
+        longitude: -71.05, 
+        speed: -15.5,
+        bearing: 450
+      }
+    });
+
+    const { validTelemetries, skippedVehicles } = vehiclesWithValidTelemetries([entity]);
+
+    expect(skippedVehicles).toBe(0);
+    expect(validTelemetries).toHaveLength(1);
+    expect(validTelemetries[0]!.speed).toBe(-15.5);
+    expect(validTelemetries[0]!.bearing).toBe(450);
+  });
+
+  test("accepts edge-case timestamps", () => {
+    const entityZero = makeVehicleEntity({ timestamp: "0" }, "v-zero");
+    const entityNegative = makeVehicleEntity({ timestamp: "-1000" }, "v-neg");
+    const entityFuture = makeVehicleEntity({ timestamp: "4000000000" }, "v-future");
+
+    const { validTelemetries, skippedVehicles } = vehiclesWithValidTelemetries([
+      entityZero, entityNegative, entityFuture
+    ]);
+
+    expect(skippedVehicles).toBe(0);
+    expect(validTelemetries).toHaveLength(3);
+    expect(validTelemetries[0]!.timestamp.getTime()).toBe(0);
+    expect(validTelemetries[1]!.timestamp.getTime()).toBe(-1000000);
+  });
 });

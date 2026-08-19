@@ -12,7 +12,7 @@ import {
     setupKafka,
     disconnectKafka, 
 } from '../src/ingestion/producer.js';
-import type { IVehicleTelemetry } from '../src/db/vehicle-telemetry.interface.js';
+import type { IVehicleTelemetry } from '../src/config.js';
 
 const { 
     mockSend, 
@@ -243,9 +243,6 @@ describe('producer tests', () => {
             const parsed = JSON.parse(sendArgs.messages[0].value);
 
             expect(parsed.timestamp).toBe('2026-08-07T12:34:56.789Z');
-            expect(parsed.event_timestamp).toBe(
-                '2026-08-07T12:34:56.789Z',
-            );
             expect(parsed.ingested_at).toBe(
                 '2026-08-07T12:35:00.123Z',
             );

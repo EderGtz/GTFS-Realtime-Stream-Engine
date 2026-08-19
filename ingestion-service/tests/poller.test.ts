@@ -1,10 +1,9 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { requestWithRetry, wait } from "../src/utils/requestWithRetry.js";
-import { decodeVehiclePositions } from "../src/ingestion/decoder.js";
+import { decodeFeedMessage } from "../src/ingestion/decoder.js";
 import { vehiclesWithValidTelemetries } from "../src/ingestion/validator.js";
 import { setupKafka, publishTelemetries } from "../src/ingestion/producer.js";
 import { logger } from "../src/utils/logger.js";
-
 
 vi.mock("../src/config.js", () => ({
     config: {
@@ -20,7 +19,7 @@ vi.mock("../src/utils/requestWithRetry.js", () => ({
     wait: vi.fn(),
 }));
 vi.mock("../src/ingestion/decoder.js", () => ({
-    decodeVehiclePositions: vi.fn(),
+    decodeFeedMessage: vi.fn(),
 }));
 vi.mock("../src/ingestion/validator.js", () => ({
     vehiclesWithValidTelemetries: vi.fn(),
@@ -61,13 +60,13 @@ describe("fetchFeedBuffer", () => {
 describe("decodeFeed", () => {
     test("returns the entity array from the decoder", () => {
         const fakeEntities = [{ id: "1" }];
-        (decodeVehiclePositions as any).mockReturnValue({ entity: fakeEntities });
+        (decodeFeedMessage as any).mockReturnValue({ entity: fakeEntities });
 
         expect(poller.decodeFeed(new ArrayBuffer(4))).toBe(fakeEntities);
     });
 
     test("returns an empty array when entity is missing", () => {
-        (decodeVehiclePositions as any).mockReturnValue({});
+        (decodeFeedMessage as any).mockReturnValue({});
         expect(poller.decodeFeed(new ArrayBuffer(4))).toEqual([]);
     });
 });
@@ -75,7 +74,7 @@ describe("decodeFeed", () => {
 describe("pollCycle", () => {
     test("wires fetch -> decode -> validate -> publish and logs the outcome", async () => {
         (requestWithRetry as any).mockResolvedValue(new ArrayBuffer(8));
-        (decodeVehiclePositions as any).mockReturnValue({ entity: [{ id: "1" }] });
+        (decodeFeedMessage as any).mockReturnValue({ entity: [{ id: "1" }] });
         (vehiclesWithValidTelemetries as any).mockReturnValue({
             validTelemetries: [{ vehicle_id: "v1" }],
             skippedVehicles: 2,
@@ -86,8 +85,12 @@ describe("pollCycle", () => {
 
         expect(publishTelemetries).toHaveBeenCalledWith([{ vehicle_id: "v1" }]);
         expect(logger.info).toHaveBeenCalledWith(
-            expect.stringContaining("1 records published to Kafka, 2 malformed vehicles omitted.")
-        );
+    "%d records published to Kafka, %d malformed vehicles omitted (cycle took %dms).",
+    1,
+    2,
+    expect.any(Number)
+);
+
     });
 
     test("propagates a fetch failure without calling publishTelemetries", async () => {
@@ -99,7 +102,7 @@ describe("pollCycle", () => {
 
     test("propagates a Kafka publish failure", async () => {
         (requestWithRetry as any).mockResolvedValue(new ArrayBuffer(8));
-        (decodeVehiclePositions as any).mockReturnValue({ entity: [] });
+        (decodeFeedMessage as any).mockReturnValue({ entity: [] });
         (vehiclesWithValidTelemetries as any).mockReturnValue({ validTelemetries: [], skippedVehicles: 0 });
         (publishTelemetries as any).mockRejectedValue(new Error("broker unreachable"));
 
@@ -148,7 +151,7 @@ describe("computeWaitMs", () => {
         await expect(poller.pollVehiclePositions(mockPoll)).rejects.toThrow("STOP_LOOP");
 
         expect(mockPoll).toHaveBeenCalledTimes(6);
-        expect(logger.fatal).toHaveBeenCalledTimes(1);
+        expect(logger.fatal).toHaveBeenCalledTimes(2); // Called two times because this is the criteria: consecutiveFailures >= ALERT_THRESHOLD
         expect(logger.error).toHaveBeenCalledTimes(6);
     });
 
@@ -173,4 +176,67 @@ describe("computeWaitMs", () => {
         // threshold — so the recovery warning should never fire.
         expect(logger.warn).not.toHaveBeenCalled();
     });
+
+    test("logs a recovery warning and resets counter when succeeding exactly after the alert threshold", async () => {
+        (setupKafka as any).mockResolvedValue(undefined);
+        
+        const mockPoll = vi.fn()
+            .mockRejectedValueOnce(new Error("fail 1"))
+            .mockRejectedValueOnce(new Error("fail 2"))
+            .mockRejectedValueOnce(new Error("fail 3"))
+            .mockRejectedValueOnce(new Error("fail 4"))
+            .mockRejectedValueOnce(new Error("fail 5")) // ALERT_THRESHOLD
+            .mockResolvedValueOnce(undefined)           // Success
+            .mockRejectedValueOnce(new Error("fail 6"));
+
+        let waitCalls = 0;
+        (wait as any).mockImplementation(() => {
+            waitCalls++;
+            if (waitCalls >= 7) throw new Error("STOP_LOOP");
+            return Promise.resolve();
+        });
+
+        await expect(poller.pollVehiclePositions(mockPoll)).rejects.toThrow("STOP_LOOP");
+
+        expect(mockPoll).toHaveBeenCalledTimes(7);
+        expect(logger.fatal).toHaveBeenCalledTimes(1);
+        
+        expect(logger.warn).toHaveBeenCalledWith("MBTA feed recovered after sustained failure.");
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+
+        expect(logger.error).toHaveBeenLastCalledWith(
+            { err: expect.any(Error), attempt: 1 },
+            "Failure during polling cycle."
+        );
+    });
+
+    test("resets consecutiveFailures on success before reaching the threshold", async () => {
+        (setupKafka as any).mockResolvedValue(undefined);
+        
+        const mockPoll = vi.fn()
+            .mockRejectedValueOnce(new Error("fail 1"))
+            .mockRejectedValueOnce(new Error("fail 2"))
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error("fail 3"));
+
+        let waitCalls = 0;
+        (wait as any).mockImplementation(() => {
+            waitCalls++;
+            if (waitCalls >= 4) throw new Error("STOP_LOOP");
+            return Promise.resolve();
+        });
+
+        await expect(poller.pollVehiclePositions(mockPoll)).rejects.toThrow("STOP_LOOP");
+
+        expect(mockPoll).toHaveBeenCalledTimes(4);
+        
+        expect(logger.fatal).not.toHaveBeenCalled();
+        expect(logger.warn).not.toHaveBeenCalled();
+
+        expect(logger.error).toHaveBeenLastCalledWith(
+            { err: expect.any(Error), attempt: 1 },
+            "Failure during polling cycle."
+        );
+    });
+
  });
