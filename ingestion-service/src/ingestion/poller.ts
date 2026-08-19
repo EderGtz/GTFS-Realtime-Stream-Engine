@@ -23,12 +23,21 @@ export function decodeFeed(buffer: ArrayBuffer) {
 }
 
 export async function pollCycle(): Promise<void> {
+    const cycleStart = Date.now();
+
     const buffer = await fetchFeedBuffer();
     const entities = decodeFeed(buffer);
     const { validTelemetries, skippedVehicles } = vehiclesWithValidTelemetries(entities);
     const { published } = await publishTelemetries(validTelemetries);
 
-    logger.info( `${published} records published to Kafka, ${skippedVehicles} malformed vehicles omitted.` );
+    const durationMs = Date.now() - cycleStart;
+    logger.info( 
+        '%d records published to Kafka, %d malformed vehicles omitted (cycle took %dms).', 
+        published, 
+        skippedVehicles, 
+        durationMs
+    );
+
 }
 
 const MAX_BACKOFF_MS = 5 * 60_000;
