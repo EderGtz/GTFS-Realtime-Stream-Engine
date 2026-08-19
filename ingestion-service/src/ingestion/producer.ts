@@ -73,6 +73,7 @@ export async function publishTelemetries(
 
     if (validTelemetries.length === 0) return { published: 0 };
 
+    // agency_id is currently fixed to mbta; multi-agency support is future work.
     await producer.send({
         topic: config.kafka.topic,
         messages: validTelemetries.map(t => ({

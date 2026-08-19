@@ -73,7 +73,7 @@ export async function pollVehiclePositions(
                 "Failure during polling cycle."
             );
             
-            if (consecutiveFailures === ALERT_THRESHOLD) {
+            if (consecutiveFailures >= ALERT_THRESHOLD) {
                 logger.fatal(
                     "ALERT: MBTA feed has failed 5 consecutive times. Manual intervention may be required."
                 );

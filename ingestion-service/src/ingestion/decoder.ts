@@ -2,7 +2,7 @@ import { transit_realtime } from "../generated/gtfs-realtime.js";
 
 export interface DecodedVehiclePosition {
     id: string;
-    vehicle: {
+    vehicle?: {
         trip: { 
             tripId?: string; 
             routeId?: string;
