@@ -4,13 +4,13 @@ This directory serves as the laboratory. The goal of these Jupyter Notebooks was
 
 ## The Notebooks
 
-1. **`01_data_quality_and_frequency.ipynb`**: Analyzes the raw Kafka stream. Discovered the true poll cadence (~15s) and separated normal vehicle layovers from a massive 10-minute correlated infrastructure outage, establishing a mathematically sound **77-second threshold** for alerting on "silent/stale" vehicles.
+1. **`01_data_quality_and_frequency.ipynb`**: Answer "What does the telemetry actually do?". Analyzes the raw Kafka stream. Discovered the true poll cadence (~15s) and separated normal vehicle layovers from a massive 10-minute correlated infrastructure outage, establishing a mathematically sound **77-second threshold** for alerting on "silent/stale" vehicles.
 
-2. **`02_stop_matching.ipynb`**: Validated that 99.5% of MBTA's pings include a native `stop_id`, and that the `current_stop_sequence` is >99.9% monotonic. This gave me solid information to trust the MBTA's native fields. A custom spatial-distance fallback algorithm was rejected as unnecessary overhead.
+2. **`02_stop_matching.ipynb`**: Answer "Can I trust the fields the agency gives me?". Validated that 99.5% of MBTA's pings include a native `stop_id`, and that the `current_stop_sequence` is >99.9% monotonic. This gave me solid information to trust the MBTA's native fields. A custom spatial-distance fallback algorithm was rejected as unnecessary overhead.
 
-3. **`03_schedule_deviation.ipynb`**: Handled Eastern timezone conversions, solved the GTFS `25:30:00` midnight-crossing edge cases, and cleaned the data to find the true fleet delay (median: 73 seconds).
+3. **`03_schedule_deviation.ipynb`**: Answer "What does the data-generation process do to my statistics?". Handled Eastern timezone conversions, solved the GTFS `25:30:00` midnight-crossing edge cases, and cleaned the data to find the true fleet delay (median: 73 seconds).
 
-4. **`04_bunching.ipynb`**: Filtered pass-bys using `direction_id` and performed a multi-variable sensitivity sweep to find the exact spatial and temporal thresholds where vehicles are genuinely "bunched".
+4. **`04_bunching.ipynb`**: Answer "What operational definition should my production system use?". Filtered pass-bys using `direction_id` and performed a multi-variable sensitivity sweep to find the exact spatial and temporal thresholds where vehicles are genuinely "bunched".
 
 ---
 
@@ -37,9 +37,25 @@ $\frac{0\text{s} + 300\text{s}}{2\text{ arrivals}} = 150\text{s average delay}$
 The higher average represents the true statistical baseline of the fleet's gaps. This is actually a very low delay, especially considering that here in Merida, any given bus is usually delayed by at least 15 minutes. 
 
 ### 2. The "Islands and Gaps" Trick (Temporal Persistence)
-In Notebook 04, we needed to know if two vehicles stayed bunched together for several consecutive polling cycles. Using traditional `for` loops to check chronological sequences across 13,000 pairs would be incredibly slow. 
+In Notebook 04, we needed to know if two vehicles stayed bunched together for several consecutive polling cycles. A naive implementation could iterate through each vehicle pair chronologically and manually check whether each observation is exactly one polling interval after the previous observation. While this would work for a dataset of this size, it introduces unnecessary Python-level iteration and makes the logic more complex.
 
-Instead, I applied the **Islands and Gaps** technique using vectorization:
+Instead, it is used a vectorized Islands-and-Gaps approach. Within each vehicle pair, observations are ranked chronologically. For truly consecutive observations, subtracting rank × POLL_INTERVAL_SECONDS from the timestamp produces the same reference timestamp for the entire continuous run.
+
+For example, with a 15-second polling interval:
+
+10:00:00 - 1 × 15s = 09:59:45
+10:00:15 - 2 × 15s = 09:59:45
+10:00:30 - 3 × 15s = 09:59:45
+
+All three observations therefore belong to the same continuous run.
+
+If there is a gap:
+
+10:00:00 - 1 × 15s = 09:59:45
+10:00:30 - 2 × 15s = 10:00:00
+
+The reference timestamp changes, which identifies a new run, which allows us to identify consecutive observations using pandas' vectorized groupby operations rather than explicitly iterating through individual records. The approach is both concise and naturally scalable as the number of vehicle pairs and observations grows.
+
 ```python
 # If pings are truly consecutive (every 15s), subtracting (rank * 15s) from 
 # their timestamp will result in the exact same "base time" for the entire streak.
@@ -48,8 +64,6 @@ close['expected_if_consecutive'] = (
 )
 
 ```
-
-Any gap in time mathematically shifts this "base time", instantly breaking the streak. Grouping by this base time allowed the algorithm to isolate continuous bunching events in milliseconds.
 
 ### 3. Operational Physics vs. Mathematical Volumetrics in the Sensitivity Sweep
 
@@ -70,7 +84,7 @@ If the math yields virtually the same number of alerts, which threshold is corre
 
 To calculate spatial distances (e.g., verifying if a vehicle moved during a layover), the notebooks utilized a Pythagorean equirectangular approximation:
 
-$\sqrt{\left((\text{lat}_1 - \text{lat}_2) \times 111\,320\right)^2 + \left((\text{lon}_1 - \text{lon}_2) \times 111\,320 \times \cos(\text{radians}(\text{lat}))\right)^2}$
+$d = \sqrt{\left((\text{lat}_1 - \text{lat}_2) \times 111\,320\right)^2 + \left((\text{lon}_1 - \text{lon}_2) \times 111\,320 \times \cos(\text{radians}(\text{lat}))\right)^2}$
 
 For urban distances under a few kilometers, this flat-earth model yields virtually identical results to the formal Haversine formula:
 
