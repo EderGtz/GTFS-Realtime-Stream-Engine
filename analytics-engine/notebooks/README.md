@@ -2,6 +2,12 @@
 
 This directory serves as the laboratory. The goal of these Jupyter Notebooks was to explore the real MBTA GTFS-Realtime telemetry, understand its quirks, and empirically derive the thresholds for our engine. These files were created in order to let the data dictate the rules and constants that are going to be used in the production code.
 
+The notebooks are organized into two distinct directories: `exploratory/` and `final/`.
+
+* **`final/`**: Contains the definitive, validated analysis executed against a clean, uninterrupted telemetry capture. These notebooks directly dictate the mathematical thresholds and rules hardcoded into the production engine.
+
+* **`exploratory/`**: Preserves the initial iterations run against an earlier dataset. Rather than erasing these early drafts, they are retained as a forensic audit trail. They document the exact hypotheses, SQL mechanics, and investigative steps used to discover that our initial Kafka topic was contaminated with development artifacts (see the *13-Minute Anomaly* below). Preserving this history demonstrates the rigorous data validation process required before trusting any real-world telemetry.
+
 ## The Notebooks
 
 1. **`01_data_quality_and_frequency.ipynb`**: Answer "What does the telemetry actually do?". Analyzes the raw Kafka stream. Discovered the true poll cadence (~15s) and separated normal vehicle layovers from a massive 10-minute correlated infrastructure outage, establishing a mathematically sound **77-second threshold** for alerting on "silent/stale" vehicles.
