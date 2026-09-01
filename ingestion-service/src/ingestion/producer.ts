@@ -73,6 +73,8 @@ export async function publishTelemetries(
 
     if (validTelemetries.length === 0) return { published: 0 };
 
+    const ingestedAt = new Date().toISOString();
+
     // agency_id is currently fixed to mbta; multi-agency support is future work.
     await producer.send({
         topic: config.kafka.topic,
@@ -81,7 +83,7 @@ export async function publishTelemetries(
             value: JSON.stringify({
                 agency_id: "mbta",
                 ...t,
-                ingested_at: new Date().toISOString()
+                ingested_at: ingestedAt
             }),
         })),
     });

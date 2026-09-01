@@ -203,4 +203,23 @@ describe('publishTelemetries', () => {
             ]),
         ).rejects.toThrow('Broker unavailable');
     });
+
+    test('every message in a single publish call shares the exact same ingested_at', async () => {
+    const telemetries = [
+        { vehicle_id: 'v1', trip_id: null, route_id: null, timestamp: new Date(),
+          location: { type: 'Point' as 'Point', coordinates: [0, 0] }, bearing: null, speed: null,
+          current_stop_sequence: null, stop_id: null, current_status: null },
+
+        { vehicle_id: 'v2', trip_id: null, route_id: null, timestamp: new Date(),
+          location: { type: 'Point' as 'Point', coordinates: [0, 0] }, bearing: null, speed: null,
+          current_stop_sequence: null, stop_id: null, current_status: null },
+    ];
+
+    await publishTelemetries(telemetries);
+
+    const sentMessages = mockSend.mock.calls[0]![0].messages;
+    const ingestedAtValues = sentMessages.map((m: any) => JSON.parse(m.value).ingested_at);
+
+    expect(new Set(ingestedAtValues).size).toBe(1);
+});
 });
