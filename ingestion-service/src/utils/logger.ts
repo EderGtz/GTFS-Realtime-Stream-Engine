@@ -13,9 +13,9 @@ export const logger = pino({
                 }
             },
             {
-                target: 'pino/file',
+                target: 'pino-roll',
                 options: {
-                    destination: './logs/ingestion.log',
+                    destination: './logs/ingestion',
                     mkdir: true,
 
                     frequency: 'daily',
