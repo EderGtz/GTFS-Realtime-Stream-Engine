@@ -98,6 +98,27 @@ Real-world data is inherently messy. During initial ingestion, DuckDB’s schema
 
 For instance, the MBTA dataset includes custom alphanumeric trip IDs, such as `8pmChrisBrownUsher-847359-4763`, dynamically generated for special event services. To prevent these schema mismatches from breaking the ingestion pipeline, relevant GTFS identifiers were explicitly cast as VARCHAR during the load phase after a comprehensive review of the raw data.
 
+¡Claro que sí! Esa historia de "El Misterio de los 13 Minutos" y cómo demostraste madurez técnica al dudar de los datos antes que del código, encaja perfectamente como el **punto número 6** en tu sección de *Deep Dives & Hard-Won Lessons*.
+
+Como tu README está redactado en un inglés técnico impecable, te escribí esta nueva entrada en el mismo idioma y con el mismo tono analítico que ya vienes manejando. Puedes copiar y pegar esto directamente debajo del punto 5:
+
+### 6. Data Provenance and the "13-Minute Anomaly"
+
+During the bunching threshold analysis (exploratory/04_bunching_initial), an impossible physical pattern emerged: 99.4% of all same-route vehicle pairs across a 45-minute dataset were concentrated in a single 13-minute window. The remaining 32 minutes appeared virtually empty.
+
+Before blaming the data, it was rigorously tested through multiple hypotheses:
+
+* **Hypothesis 1 (Bucket-Flooring):** It was suspected that the 15-second time-bucketing was artificially splitting simultaneous pings. Replaced it with a true elapsed-time tolerance (`abs(date_diff) <= 15`). The query evaluated more pairs, but the 99% concentration remained.
+* **Hypothesis 2 (Stale Pings / Feed Backlog):** It was suspected the MBTA API had stalled and later flushed a backlog of old pings. It was implemented a strict feed-latency filter (`ingested_at - timestamp_eastern <= 77s`) before the join to drop "ghost" buses. Only 152 pings were dropped. The anomaly persisted.
+
+**The Breakthrough:** The smoking gun wasn't the mathematical logic, but the ingestion cadence. By grouping the raw pings by their `ingested_at` timestamps, It was discovered the 13-minute window contained 132 poll cycles (averaging one poll every ~5.9 seconds), while the remaining 32 minutes contained only 3 polls.
+
+Because the `ingestion-service` is hard-coded to a strict 15-second minimum interval, a 5.9-second cadence was physically impossible for a single, steady production instance.
+
+**The Root Cause & Decision:** Apache Kafka strictly decouples ingestion from analytics, persistently retaining all messages. Because thr Python consumer was configured with `auto.offset.reset=earliest`, it did not read a clean 45-minute slice of Boston traffic. Instead, it ingested the entire Kafka topic's development history—a Frankenstein dataset containing overlapping test scripts, frequent `npm run dev` restarts, and debugging bursts.
+
+Instead of hacking the analytical algorithms to fit anomalies, the engineering decision was to discard the contaminated sample, purge the Kafka topic, and execute a clean, uninterrupted 60-minute capture to empirically lock in our final metrics.
+
 ---
 
 ## Final Production Rules
