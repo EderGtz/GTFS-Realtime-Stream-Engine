@@ -104,10 +104,6 @@ Real-world data is inherently messy. During initial ingestion, DuckDB’s schema
 
 For instance, the MBTA dataset includes custom alphanumeric trip IDs, such as `8pmChrisBrownUsher-847359-4763`, dynamically generated for special event services. To prevent these schema mismatches from breaking the ingestion pipeline, relevant GTFS identifiers were explicitly cast as VARCHAR during the load phase after a comprehensive review of the raw data.
 
-¡Claro que sí! Esa historia de "El Misterio de los 13 Minutos" y cómo demostraste madurez técnica al dudar de los datos antes que del código, encaja perfectamente como el **punto número 6** en tu sección de *Deep Dives & Hard-Won Lessons*.
-
-Como tu README está redactado en un inglés técnico impecable, te escribí esta nueva entrada en el mismo idioma y con el mismo tono analítico que ya vienes manejando. Puedes copiar y pegar esto directamente debajo del punto 5:
-
 ### 6. Data Provenance and the "13-Minute Anomaly"
 
 During the bunching threshold analysis (exploratory/04_bunching_initial), an impossible physical pattern emerged: 99.4% of all same-route vehicle pairs across a 45-minute dataset were concentrated in a single 13-minute window. The remaining 32 minutes appeared virtually empty.
@@ -124,6 +120,25 @@ Because the `ingestion-service` is hard-coded to a strict 15-second minimum inte
 **The Root Cause & Decision:** Apache Kafka strictly decouples ingestion from analytics, persistently retaining all messages. Because thr Python consumer was configured with `auto.offset.reset=earliest`, it did not read a clean 45-minute slice of Boston traffic. Instead, it ingested the entire Kafka topic's development history—a Frankenstein dataset containing overlapping test scripts, frequent `npm run dev` restarts, and debugging bursts.
 
 Instead of hacking the analytical algorithms to fit anomalies, the engineering decision was to discard the contaminated sample, purge the Kafka topic, and execute a clean, uninterrupted 60-minute capture to empirically lock in our final metrics.
+
+### 7. The Microsecond Batching Artifact (The `.map()` Clock Bug)
+
+During poll-cadence analysis, the data suggested the ingestion service was producing hundreds of distinct poll cycles per second—a physical impossibility given our hard-coded 15-second polling interval.
+
+The root cause was a subtle JavaScript evaluation bug in the Kafka producer (`producer.ts`). The `ingested_at` timestamp was being assigned directly inside the payload-building loop:
+
+```typescript
+messages: validTelemetries.map(t => ({
+    ...t,
+    ingested_at: new Date().toISOString() // Evaluated 300+ times in rapid succession
+}))
+
+```
+
+Because the Node.js event loop executes fast enough but the system clock ticks at millisecond resolution, the time would advance mid-iteration. A single batch of 300 vehicles from *one* MBTA API response ended up fractured into dozens of distinct `ingested_at` timestamps, separated by mere milliseconds. This artifact broke downstream pandas `groupby('ingested_at')` operations, tricking the analytics engine into treating a single snapshot as a sustained burst of micro-polls.
+
+**The Fix & Decision:**
+Hoisting the timestamp creation outside the `.map()` loop (`const ingestedAt = new Date().toISOString();`) ensures the entire API payload shares a single, unified ingestion stamp. To prevent this from silently returning in the future, a strict regression test was added to the unit test suite, asserting that a `Set` of all `ingested_at` values within a single publish call always has a size of exactly `1`. If an action happens as a batch, it must be stamped as a batch.
 
 ---
 
