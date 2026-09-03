@@ -1,0 +1,11 @@
+{
+  "file": "telemetry_sample_N3.parquet",
+  "rows": 197109,
+  "sha256": "922117775e390be73268b4e864e2950900ed9263e0228f48c1bc5e9e6b34e926",
+  "capture_start_eastern": "2026-09-01 18:15:15-04:00",
+  "capture_end_eastern": "2026-09-01 21:33:48-04:00",
+  "agency_timezone": "America/New_York",
+  "poll_interval_seconds": 15,
+  "active_vehicles_per_poll_median": 453,
+  "silent_vehicle_threshold_seconds": 110.0
+}
