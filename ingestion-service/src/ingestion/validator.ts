@@ -72,6 +72,7 @@ export function vehiclesWithValidTelemetries(
             trip_id: vehicle.trip?.tripId ?? null,
             route_id: vehicle.trip?.routeId ?? null,
             timestamp: new Date(Number(vehicle.timestamp) *  1000),
+            direction_id: vehicle.trip?.direction_id ?? null,
 
             location: {
                 type: "Point",

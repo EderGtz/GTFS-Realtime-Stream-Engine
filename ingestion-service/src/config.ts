@@ -27,6 +27,7 @@ export interface IVehicleTelemetry {
     vehicle_id: string;
     trip_id: string | null; 
     route_id: string | null;
+    direction_id: number | null;
 
     location: { // GeoJson format
         type: 'Point';

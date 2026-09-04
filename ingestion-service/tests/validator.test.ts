@@ -9,7 +9,7 @@ function makeVehicleEntity(
     return {
         id,
         vehicle: {
-        trip: { tripId: "trip-1", routeId: "route-1" },
+        trip: { tripId: "trip-1", routeId: "route-1", direction_id: 1, },
         vehicle: { id: "vehicle-1", label: "Bus 1" },
         position: { latitude: 42.35, longitude: -71.05 },
         timestamp: "1700000000",
