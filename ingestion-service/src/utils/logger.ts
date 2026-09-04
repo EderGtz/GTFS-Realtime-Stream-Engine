@@ -18,17 +18,21 @@ if (process.env.NODE_ENV !== 'test') {
             file: './logs/ingestion',
             mkdir: true,
             frequency: 'daily',
+            dateFormat: 'dd-MM-yyyy',
             extension: '.log',
             limit: {
                 count: 7
-            }
-        }
+            },
+        },
     });
 }
 
 export const logger = pino({
-    level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'test' ? 'silent' : 'info'),
+    level: 
+    process.env.LOG_LEVEL || 
+    (process.env.NODE_ENV === 'test' ? 'silent' : 'info'),
+    
     transport: {
-        targets
-    }
+        targets,
+    },
 });
