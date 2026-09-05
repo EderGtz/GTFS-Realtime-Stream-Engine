@@ -19,4 +19,10 @@ npm-debug.log*
 # Jupyter notebook checkpoints
 .ipynb_checkpoints/
 
+# Static GTFS files
 MBTA_GTFS/
+
+# Enviroment and cache files from the analytics engine
+__pycache__/
+.venv/
+.pytest_cache/
