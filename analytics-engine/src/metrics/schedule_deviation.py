@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Optional
+from typing import cast
 
 import pandas as pd
 
@@ -44,18 +44,24 @@ AGENCY_TZ = "America/New_York"
 @dataclass(frozen=True)
 class ScheduledStopTime:
     """One row from stop_times.txt, keyed by (trip_id, stop_sequence)."""
+
     trip_id: str
     stop_sequence: int
-    arrival_time: Optional[str]    # raw GTFS "HH:MM:SS" text; hours may exceed 24
-    departure_time: Optional[str]
+    arrival_time: str | None  # raw GTFS "HH:MM:SS" text; hours may exceed 24
+    departure_time: str | None
 
 
 @dataclass(frozen=True)
 class DeviationResult:
+    """
+    Schedule deviation for a single observed arrival or departure event.
+    `deviation_seconds` is positive when the vehicle is late and negative when early.
+    """
+
     vehicle_id: str
     trip_id: str
     stop_sequence: int
-    kind: str                      # "arrival" or "departure"
+    kind: str  # "arrival" or "departure"
     scheduled_at: pd.Timestamp
     actual_at: pd.Timestamp
     deviation_seconds: float
@@ -67,7 +73,9 @@ def parse_gtfs_time_offset(time_str: str) -> timedelta:
     return timedelta(hours=h, minutes=m, seconds=s)
 
 
-def resolve_scheduled_datetime(actual_eastern: pd.Timestamp, gtfs_time_str: str) -> pd.Timestamp:
+def resolve_scheduled_datetime(
+    actual_eastern: pd.Timestamp, gtfs_time_str: str
+) -> pd.Timestamp:
     """
     Anchor a GTFS time string to a real datetime by choosing whichever of the previous,
     same, or next Eastern calendar day lands closest to the actual observed time.
@@ -107,11 +115,9 @@ def collapse_to_first_arrival(pings: pd.DataFrame) -> pd.DataFrame:
     """
     stopped = pings[pings["current_status"] == "STOPPED_AT"].copy()
     stopped = stopped.sort_values("timestamp_eastern")
-    return (
-        stopped
-        .groupby(["vehicle_id", "trip_id", "current_stop_sequence"], as_index=False)
-        .first()
-    )
+    return stopped.groupby(
+        ["vehicle_id", "trip_id", "current_stop_sequence"], as_index=False
+    ).first()
 
 
 def compute_arrival_deviations(
@@ -135,24 +141,32 @@ def compute_arrival_deviations(
     results: list[DeviationResult] = []
 
     for row in first_arrivals.itertuples():
-        key = (row.trip_id, int(row.current_stop_sequence))
+        vehicle_id = str(row.vehicle_id)
+        trip_id = str(row.trip_id)
+        stop_sequence = cast(int, row.current_stop_sequence)
+
+        key = (trip_id, stop_sequence)
         scheduled = stop_times_lookup.get(key)
         if scheduled is None or not scheduled.arrival_time:
             continue
 
         actual_eastern = to_eastern(row.timestamp_eastern)
-        scheduled_dt = resolve_scheduled_datetime(actual_eastern, scheduled.arrival_time)
+        scheduled_dt = resolve_scheduled_datetime(
+            actual_eastern, scheduled.arrival_time
+        )
         deviation = (actual_eastern - scheduled_dt).total_seconds()
 
-        results.append(DeviationResult(
-            vehicle_id=row.vehicle_id,
-            trip_id=row.trip_id,
-            stop_sequence=int(row.current_stop_sequence),
-            kind="arrival",
-            scheduled_at=scheduled_dt,
-            actual_at=actual_eastern,
-            deviation_seconds=deviation,
-        ))
+        results.append(
+            DeviationResult(
+                vehicle_id=vehicle_id,
+                trip_id=trip_id,
+                stop_sequence=int(stop_sequence),
+                kind="arrival",
+                scheduled_at=scheduled_dt,
+                actual_at=actual_eastern,
+                deviation_seconds=deviation,
+            )
+        )
 
     return results
 
@@ -171,31 +185,40 @@ def compute_departure_deviations(
     """
     stopped = pings[pings["current_status"] == "STOPPED_AT"].copy()
     stopped = stopped.sort_values("timestamp_eastern")
-    last_before_departure = (
-        stopped
-        .groupby(["vehicle_id", "trip_id", "current_stop_sequence"], as_index=False)
-        .last()
-    )
+
+    last_before_departure = stopped.groupby(
+        ["vehicle_id", "trip_id", "current_stop_sequence"], as_index=False
+    ).last()
 
     results: list[DeviationResult] = []
+
     for row in last_before_departure.itertuples():
-        key = (row.trip_id, int(row.current_stop_sequence))
+        vehicle_id = str(row.vehicle_id)
+        trip_id = str(row.trip_id)
+        stop_sequence = cast(int, row.current_stop_sequence)
+
+        key = (trip_id, stop_sequence)
         scheduled = stop_times_lookup.get(key)
+
         if scheduled is None or not scheduled.departure_time:
             continue
 
         actual_eastern = to_eastern(row.timestamp_eastern)
-        scheduled_dt = resolve_scheduled_datetime(actual_eastern, scheduled.departure_time)
+        scheduled_dt = resolve_scheduled_datetime(
+            actual_eastern, scheduled.departure_time
+        )
         deviation = (actual_eastern - scheduled_dt).total_seconds()
 
-        results.append(DeviationResult(
-            vehicle_id=row.vehicle_id,
-            trip_id=row.trip_id,
-            stop_sequence=int(row.current_stop_sequence),
-            kind="departure",
-            scheduled_at=scheduled_dt,
-            actual_at=actual_eastern,
-            deviation_seconds=deviation,
-        ))
+        results.append(
+            DeviationResult(
+                vehicle_id=vehicle_id,
+                trip_id=trip_id,
+                stop_sequence=stop_sequence,
+                kind="departure",
+                scheduled_at=scheduled_dt,
+                actual_at=actual_eastern,
+                deviation_seconds=deviation,
+            )
+        )
 
     return results

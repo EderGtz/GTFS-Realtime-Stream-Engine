@@ -27,17 +27,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import cos, radians, sqrt
+
 import numpy as np
 import pandas as pd
 
 METERS_PER_DEGREE = 111_320
-POLL_INTERVAL_SECONDS = 15          # matches BASE_INTERVAL_MS in poller.ts
-DISTANCE_THRESHOLD_METERS = 100     # notebook 04, Section C
-MIN_CONSECUTIVE_OBSERVATIONS = 2    # notebook 04, Section C
+POLL_INTERVAL_SECONDS = 15  # matches BASE_INTERVAL_MS in poller.ts
+DISTANCE_THRESHOLD_METERS = 100  # notebook 04, Section C
+MIN_CONSECUTIVE_OBSERVATIONS = 2  # notebook 04, Section C
 
 
 @dataclass(frozen=True)
 class BunchingEvent:
+    """Period where two vehicles remain unusually close for consecutive observations.
+
+    `start_time` and `end_time` define the event window, and `min_distance_meters`
+    records the closest observed distance between the vehicles during that window.
+    """
+
     route_id: str
     direction_id: int
     vehicle_a: str
@@ -94,24 +101,22 @@ def find_close_pairs(
     # few vehicles. The additional intermediate memory from the self-merge is therefore
     # considered an acceptable trade-off for faster vectorized distance calculations.
     pairs = df.merge(
-        df,
-        on=['time_bucket', 'route_id', 'direction_id'],
-        suffixes=('_a', '_b')
+        df, on=["time_bucket", "route_id", "direction_id"], suffixes=("_a", "_b")
     )
 
     # Keep each unordered vehicle pair exactly once, using a canonical ordering.
-    pairs = pairs[pairs['vehicle_id_a'] < pairs['vehicle_id_b']].copy()
+    pairs = pairs[pairs["vehicle_id_a"] < pairs["vehicle_id_b"]].copy()
 
     # Vectorized equivalent of displacement_meters() for all candidate pairs.
     # Keeping this calculation vectorized avoids a row-wise apply(), which would
     # introduce Python-level function calls, reducing the performance
     # of the self-merge approach.
-    mid_lat_rad = np.radians((pairs['lat_a'] + pairs['lat_b']) / 2)
-    dx = (pairs['lon_b'] - pairs['lon_a']) * METERS_PER_DEGREE * np.cos(mid_lat_rad)
-    dy = (pairs['lat_b'] - pairs['lat_a']) * METERS_PER_DEGREE
-    pairs['distance_meters'] = np.sqrt(dx**2 + dy**2)
+    mid_lat_rad = np.radians((pairs["lat_a"] + pairs["lat_b"]) / 2)
+    dx = (pairs["lon_b"] - pairs["lon_a"]) * METERS_PER_DEGREE * np.cos(mid_lat_rad)
+    dy = (pairs["lat_b"] - pairs["lat_a"]) * METERS_PER_DEGREE
+    pairs["distance_meters"] = np.sqrt(dx**2 + dy**2)
 
-    pairs = pairs[pairs['distance_meters'] <= distance_threshold_m]
+    pairs = pairs[pairs["distance_meters"] <= distance_threshold_m]
 
     pairs = pairs.rename(
         columns={
@@ -146,13 +151,9 @@ def detect_bunching_events(
         run_start = 0
 
         for i in range(1, len(group) + 1):
-
-            is_consecutive = (
-                i < len(group)
-                and (
-                   time_buckets[i] - time_buckets[i - 1]
-                    == pd.Timedelta(seconds=POLL_INTERVAL_SECONDS)
-                )
+            is_consecutive = i < len(group) and (
+                time_buckets[i] - time_buckets[i - 1]
+                == pd.Timedelta(seconds=POLL_INTERVAL_SECONDS)
             )
 
             if not is_consecutive:
