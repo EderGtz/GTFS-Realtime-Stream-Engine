@@ -7,7 +7,7 @@ export interface DecodedVehiclePosition {
             tripId?: string; 
             routeId?: string;
             scheduleRelationship?: string;
-            direction_id?: number;
+            directionId?: number;
         };
         vehicle?: { 
             id?: string; 
