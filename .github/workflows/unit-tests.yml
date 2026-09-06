@@ -1,4 +1,4 @@
-name: "CI: Unit Tests"
+name: "CI: Unit Tests for ingestion service"
 
 on:
   push:
