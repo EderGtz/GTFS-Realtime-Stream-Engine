@@ -26,3 +26,5 @@ MBTA_GTFS/
 __pycache__/
 .venv/
 .pytest_cache/
+*.pyc
+.ruff_cache/
