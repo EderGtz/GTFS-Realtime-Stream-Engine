@@ -207,16 +207,20 @@ class TestHasChanged:
 
         data = GtfsStaticData(gtfs_dir)
         data.load()
+        version = data._current_version
 
-        assert data._current_version.startswith("fingerprint:")
-        
+        assert version is not None
+        assert version.startswith("fingerprint:")
+
     def test_falls_back_to_fingerprint_when_feed_info_is_empty(self, gtfs_dir):
         (gtfs_dir / "feed_info.txt").write_text("")
 
         data = GtfsStaticData(gtfs_dir)
         data.load()
+        version = data._current_version
 
-        assert data._current_version.startswith("fingerprint:")
+        assert version is not None
+        assert version.startswith("fingerprint:")
 
 
 
