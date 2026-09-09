@@ -23,7 +23,6 @@ Known GTFS quirks already discovered elsewhere in this project, handled here too
 """
 
 import hashlib
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -217,22 +216,35 @@ class GtfsStaticData:
 
     def _compute_version(self) -> str:
         feed_info_path = self.gtfs_dir / _OPTIONAL_VERSION_FILE
+
         if feed_info_path.exists():
             try:
                 feed_info = pd.read_csv(feed_info_path)
-                if "feed_version" in feed_info.columns and len(feed_info) > 0:
-                    version = feed_info["feed_version"].iloc[0]
-                    if pd.notna(version):
-                        return f"feed_version:{version}"
-            except Exception:
-                pass  # fall through to the fingerprint below on any parse issue
+            except (pd.errors.EmptyDataError, pd.errors.ParserError):
+                feed_info = None
 
-        # Lightweight fingerprint: size + mtime of each required file. Cheap enough
-        # to call on every check cycle, unlike hashing full file contents --
-        # MBTA's stop_times.txt alone can be hundreds of thousands of rows.
+            if feed_info is not None and "feed_version" in feed_info.columns and len(feed_info) > 0:
+                version = feed_info["feed_version"].iloc[0]
+
+                if pd.notna(version):
+                    return f"feed_version:{version}"
+
+        return self._compute_file_fingerprint()
+
+    def _compute_file_fingerprint(self) -> str:
+        """
+        Lightweight fingerprint: size + mtime of each required file. Cheap enough
+        to call on every check cycle, unlike hashing full file contents:
+        MBTA's stop_times.txt alone can be hundreds of thousands of rows.
+        """
         parts = []
+
         for filename in _REQUIRED_FILES:
             stat = (self.gtfs_dir / filename).stat()
-            parts.append(f"{filename}:{stat.st_size}:{int(stat.st_mtime)}")
+            parts.append(
+                f"{filename}:{stat.st_size}:{int(stat.st_mtime)}"
+            )
+
         fingerprint = "|".join(parts)
+
         return f"fingerprint:{hashlib.sha256(fingerprint.encode()).hexdigest()}"
