@@ -29,6 +29,7 @@ from pathlib import Path
 import pandas as pd
 
 from metrics.schedule_deviation import ScheduledStopTime
+from utils.logger import get_logger
 
 _REQUIRED_FILES = ("stops.txt", "trips.txt", "stop_times.txt")
 _OPTIONAL_VERSION_FILE = "feed_info.txt"
@@ -47,6 +48,7 @@ _REQUIRED_COLUMNS = {
     "stops.txt": {"stop_id"},
 }
 
+logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class StopInfo:
@@ -88,6 +90,7 @@ class GtfsStaticData:
             FileNotFoundError: If a required GTFS file is missing.
             ValueError: If a required file is missing one or more required columns.
         """
+        logger.info(f"Loading GTFS static data from {self.gtfs_dir}...")
         self._validate_files_exist()
 
         trips_df = pd.read_csv(
