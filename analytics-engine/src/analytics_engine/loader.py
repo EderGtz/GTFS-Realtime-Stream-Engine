@@ -137,8 +137,18 @@ class GtfsStaticData:
         """Convenience wrapper: reload only if has_changed() is True. Returns
         whether a reload actually happened."""
         if self.has_changed():
-            self.load()
-            return True
+            try:
+                self.load()
+                return True
+            except (
+                FileNotFoundError, 
+                ValueError, 
+                pd.errors.EmptyDataError, 
+                pd.errors.ParserError
+                ):
+                # The exception is not raised here. The system continues to use
+                # the old, valid snapshot (self.direction_lookup, etc.)
+                return False
         return False
 
     # --- internals ---
@@ -194,7 +204,7 @@ class GtfsStaticData:
             trip_id = str(row.trip_id)
             stop_sequence = int(row.stop_sequence)
 
-            if stop_sequence <= 0:
+            if stop_sequence < 0:
                 raise ValueError(
                     f"Invalid stop_sequence for trip {trip_id}: "
                     f"{stop_sequence}"
