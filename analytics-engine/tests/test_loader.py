@@ -198,6 +198,28 @@ class TestHasChanged:
         )
         assert data.has_changed() is True
 
+    def test_falls_back_to_fingerprint_when_feed_version_column_is_missing(
+        self, gtfs_dir
+    ):
+        pd.DataFrame([
+            {"feed_publisher_name": "MBTA"},
+        ]).to_csv(gtfs_dir / "feed_info.txt", index=False)
+
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+
+        assert data._current_version.startswith("fingerprint:")
+        
+    def test_falls_back_to_fingerprint_when_feed_info_is_empty(self, gtfs_dir):
+        (gtfs_dir / "feed_info.txt").write_text("")
+
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+
+        assert data._current_version.startswith("fingerprint:")
+
+
+
 class TestSchemaValidation:
     def test_raises_when_required_trips_column_is_missing(self, gtfs_dir):
         trips = pd.DataFrame([
