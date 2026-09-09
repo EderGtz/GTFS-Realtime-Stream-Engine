@@ -93,4 +93,22 @@ describe("decodeFeedMessage", () => {
     const empty = new Uint8Array([]);
     expect(() => decodeFeedMessage(empty)).toThrow();
   });
+
+  test("decodes a non-null directionId for at least one real vehicle", () => {
+    const buffer = readFileSync(FIXTURE_PATH);
+    const { entity } = decodeFeedMessage(new Uint8Array(buffer));
+
+    const withDirection = entity.filter(e => e.vehicle?.trip?.directionId !== undefined);
+
+    // If this comes back empty, either the fixture genuinely has zero vehicles
+    // reporting a direction (very unlikely for a full real MBTA snapshot), or the
+    // decoder interface's field name doesn't match protobufjs's actual camelCase output 
+    expect(withDirection.length).toBeGreaterThan(0);
+
+    for (const e of withDirection) {
+        expect(Number.isInteger(e.vehicle!.trip!.directionId)).toBe(true);
+        expect([0, 1]).toContain(e.vehicle!.trip!.directionId);
+      }
+    }
+  );
 });
