@@ -29,14 +29,6 @@ from pathlib import Path
 
 import pandas as pd
 
-# Ensure src/ is importable regardless of how the caller's own sys.path is set up,
-# so `from metrics.schedule_deviation import ScheduledStopTime` below doesn't depend
-# on external test/run configuration this module has no control over.
-_SRC_DIR = Path(__file__).resolve().parents[1]
-
-if str(_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(_SRC_DIR))
-
 from metrics.schedule_deviation import ScheduledStopTime
 
 _REQUIRED_FILES = ("stops.txt", "trips.txt", "stop_times.txt")
@@ -91,9 +83,11 @@ class GtfsStaticData:
 
     def load(self) -> None:
         """
-        Read all three required files fresh and rebuild every lookup. Each call
-        fully replaces the previous snapshot rather than merging into it, so a
-        partial or corrupt previous load can never linger.
+        Read all three required files fresh and rebuild every lookup. 
+        
+        Raises:
+            FileNotFoundError: If a required GTFS file is missing.
+            ValueError: If a required file is missing one or more required columns.
         """
         self._validate_files_exist()
 
@@ -113,7 +107,9 @@ class GtfsStaticData:
         self._validate_columns("trips.txt", trips_df)
         self._validate_columns("stop_times.txt", stop_times_df)
         self._validate_columns("stops.txt", stops_df)
-        
+
+        # Build everything into local variables first.
+        # The current snapshot is only replaced after all validation/building succeeds
         direction_lookup = self._build_direction_lookup(trips_df)
         stop_times_lookup = self._build_stop_times_lookup(stop_times_df)
         stops_lookup = self._build_stops_lookup(stops_df)
@@ -148,10 +144,14 @@ class GtfsStaticData:
     # --- internals ---
 
     def _validate_files_exist(self) -> None:
-        missing = [f for f in _REQUIRED_FILES if not (self.gtfs_dir / f).exists()]
+        missing = [filename 
+           for filename in _REQUIRED_FILES 
+           if not (self.gtfs_dir / filename).exists()
+        ]
         if missing:
             raise FileNotFoundError(
-                f"Missing required GTFS-static file(s) in {self.gtfs_dir}: {missing}"
+                f"Missing required GTFS-static file(s) in "
+                f"{self.gtfs_dir}: {missing}"
             )
 
     def _validate_columns(self, filename: str, df: pd.DataFrame) -> None:
@@ -168,19 +168,29 @@ class GtfsStaticData:
     def _build_direction_lookup(trips_df: pd.DataFrame) -> dict[str, int]:
         if "direction_id" not in trips_df.columns:
             return {}
+        
         valid = trips_df.dropna(subset=["trip_id", "direction_id"])
-        return {row.trip_id: int(row.direction_id) for row in valid.itertuples()}
+        lookup: dict[str, int] = {}
+
+        for row in valid.itertuples():
+            if row.direction_id not in (0, 1):
+                raise ValueError(
+                    f"Invalid direction_id for trip {row.trip_id}: "
+                    f"{row.direction_id}"
+                )
+            lookup[row.trip_id] = int(row.direction_id)
+
+        return lookup
 
     @staticmethod
     def _build_stop_times_lookup(
         stop_times_df: pd.DataFrame,
     ) -> dict[tuple[str, int], ScheduledStopTime]:
-        
         lookup: dict[tuple[str, int], ScheduledStopTime] = {}
 
         for row in stop_times_df.itertuples():
-
             key = (row.trip_id, int(row.stop_sequence))
+
             lookup[key] = ScheduledStopTime(
                 trip_id=row.trip_id,
                 stop_sequence=int(row.stop_sequence),
