@@ -112,11 +112,12 @@ class GtfsStaticData:
         direction_lookup = self._build_direction_lookup(trips_df)
         stop_times_lookup = self._build_stop_times_lookup(stop_times_df)
         stops_lookup = self._build_stops_lookup(stops_df)
+        version = self._compute_version()
 
         self.direction_lookup = direction_lookup
         self.stop_times_lookup = stop_times_lookup
         self.stops_lookup = stops_lookup
-        self._current_version = self._compute_version()
+        self._current_version = version
 
     def has_changed(self) -> bool:
         """
@@ -143,7 +144,8 @@ class GtfsStaticData:
     # --- internals ---
 
     def _validate_files_exist(self) -> None:
-        missing = [filename 
+        missing = [
+            filename 
            for filename in _REQUIRED_FILES 
            if not (self.gtfs_dir / filename).exists()
         ]
@@ -165,19 +167,20 @@ class GtfsStaticData:
 
     @staticmethod
     def _build_direction_lookup(trips_df: pd.DataFrame) -> dict[str, int]:
-        if "direction_id" not in trips_df.columns:
-            return {}
         
         valid = trips_df.dropna(subset=["trip_id", "direction_id"])
         lookup: dict[str, int] = {}
 
         for row in valid.itertuples():
+            trip_id = str(row.trip_id)
+            direction_id = int(row.direction_id)
+
             if row.direction_id not in (0, 1):
                 raise ValueError(
                     f"Invalid direction_id for trip {row.trip_id}: "
                     f"{row.direction_id}"
                 )
-            lookup[row.trip_id] = int(row.direction_id)
+            lookup[trip_id] = direction_id
 
         return lookup
 
@@ -188,29 +191,68 @@ class GtfsStaticData:
         lookup: dict[tuple[str, int], ScheduledStopTime] = {}
 
         for row in stop_times_df.itertuples():
-            key = (row.trip_id, int(row.stop_sequence))
+            trip_id = str(row.trip_id)
+            stop_sequence = int(row.stop_sequence)
+
+            if stop_sequence <= 0:
+                raise ValueError(
+                    f"Invalid stop_sequence for trip {trip_id}: "
+                    f"{stop_sequence}"
+                )
+
+            key = (trip_id, stop_sequence)
+
+            arrival_time = (
+                str(row.arrival_time)
+                if pd.notna(row.arrival_time)
+                else None
+            )
+            departure_time = (
+                str(row.departure_time)
+                if pd.notna(row.departure_time)
+                else None
+            )
 
             lookup[key] = ScheduledStopTime(
-                trip_id=row.trip_id,
-                stop_sequence=int(row.stop_sequence),
-                arrival_time=row.arrival_time if pd.notna(row.arrival_time) else None,
-                departure_time=row.departure_time if pd.notna(row.departure_time) else None,
+                trip_id=trip_id,
+                stop_sequence=stop_sequence,
+                arrival_time=arrival_time,
+                departure_time=departure_time,
             )
         return lookup
 
     @staticmethod
     def _build_stops_lookup(stops_df: pd.DataFrame) -> dict[str, StopInfo]:
         lookup: dict[str, StopInfo] = {}
+
         has_name = "stop_name" in stops_df.columns
         has_lat = "stop_lat" in stops_df.columns
         has_lon = "stop_lon" in stops_df.columns
 
         for row in stops_df.itertuples():
-            lookup[row.stop_id] = StopInfo(
-                stop_id=row.stop_id,
-                stop_name=(row.stop_name if has_name and pd.notna(row.stop_name) else None),
-                stop_lat=(float(row.stop_lat) if has_lat and pd.notna(row.stop_lat) else None),
-                stop_lon=(float(row.stop_lon) if has_lon and pd.notna(row.stop_lon) else None),
+            stop_id = str(row.stop_id)
+
+            stop_name = (
+                str(row.stop_name)
+                if has_name and pd.notna(row.stop_name)
+                else None
+            )
+            stop_lat = (
+                float(row.stop_lat)
+                if has_lat and pd.notna(row.stop_lat)
+                else None
+            )
+            stop_lon = (
+                float(row.stop_lon)
+                if has_lon and pd.notna(row.stop_lon)
+                else None
+            )
+
+            lookup[stop_id] = StopInfo(
+                stop_id=stop_id,
+                stop_name=stop_name,
+                stop_lat=stop_lat,
+                stop_lon=stop_lon,
             )
         return lookup
 
