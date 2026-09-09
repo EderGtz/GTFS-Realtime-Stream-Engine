@@ -110,15 +110,18 @@ class GtfsStaticData:
             dtype={"stop_id": str},
         )
 
+        self._validate_columns("trips.txt", trips_df)
+        self._validate_columns("stop_times.txt", stop_times_df)
+        self._validate_columns("stops.txt", stops_df)
+        
         direction_lookup = self._build_direction_lookup(trips_df)
         stop_times_lookup = self._build_stop_times_lookup(stop_times_df)
         stops_lookup = self._build_stops_lookup(stops_df)
-        version = self._compute_version()
 
         self.direction_lookup = direction_lookup
         self.stop_times_lookup = stop_times_lookup
         self.stops_lookup = stops_lookup
-        self._current_version = version
+        self._current_version = self._compute_version()
 
     def has_changed(self) -> bool:
         """
@@ -149,6 +152,16 @@ class GtfsStaticData:
         if missing:
             raise FileNotFoundError(
                 f"Missing required GTFS-static file(s) in {self.gtfs_dir}: {missing}"
+            )
+
+    def _validate_columns(self, filename: str, df: pd.DataFrame) -> None:
+        required = _REQUIRED_COLUMNS[filename]
+        missing = required - set(df.columns)
+
+        if missing:
+            raise ValueError(
+                f"Missing required column(s) in {filename}: "
+                f"{sorted(missing)}"
             )
 
     @staticmethod

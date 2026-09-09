@@ -109,6 +109,34 @@ class TestLoad:
         with pytest.raises(FileNotFoundError, match="trips.txt"):
             data.load()
 
+    def test_failed_reload_preserves_previous_snapshot(self, gtfs_dir):
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+
+        original_direction_lookup = data.direction_lookup.copy()
+        original_stop_times_lookup = data.stop_times_lookup.copy()
+        original_stops_lookup = data.stops_lookup.copy()
+        original_version = data._current_version
+
+        # Corrupt the schema of trips.txt.
+        trips = pd.DataFrame([
+            {
+                "trip_id": "99999999",
+                "route_id": "Red",
+                # direction_id intentionally missing
+            },
+        ])
+        trips.to_csv(gtfs_dir / "trips.txt", index=False)
+
+        with pytest.raises(ValueError):
+            data.load()
+
+        assert data.direction_lookup == original_direction_lookup
+        assert data.stop_times_lookup == original_stop_times_lookup
+        assert data.stops_lookup == original_stops_lookup
+        assert data._current_version == original_version
+
+
 
 class TestHasChanged:
     def test_true_before_the_first_load(self, gtfs_dir):
@@ -169,3 +197,60 @@ class TestHasChanged:
             gtfs_dir / "feed_info.txt", index=False
         )
         assert data.has_changed() is True
+
+class TestSchemaValidation:
+    def test_raises_when_required_trips_column_is_missing(self, gtfs_dir):
+        trips = pd.DataFrame([
+            {
+                "trip_id": "12345678",
+                "route_id": "Red",
+                # direction_id intentionally missing
+            },
+        ])
+        trips.to_csv(gtfs_dir / "trips.txt", index=False)
+
+        data = GtfsStaticData(gtfs_dir)
+
+        with pytest.raises(
+            ValueError,
+            match=r"Missing required column\(s\) in trips\.txt:.*direction_id",
+        ):
+            data.load()
+
+    def test_raises_when_required_stop_times_column_is_missing(self, gtfs_dir):
+        stop_times = pd.DataFrame([
+            {
+                "trip_id": "12345678",
+                "stop_sequence": 1,
+                "arrival_time": "08:00:00",
+                # departure_time intentionally missing
+            },
+        ])
+        stop_times.to_csv(gtfs_dir / "stop_times.txt", index=False)
+
+        data = GtfsStaticData(gtfs_dir)
+
+        with pytest.raises(
+            ValueError,
+            match=r"Missing required column\(s\) in stop_times\.txt:.*departure_time",
+        ):
+            data.load()
+
+    def test_raises_when_required_stops_column_is_missing(self, gtfs_dir):
+        stops = pd.DataFrame([
+            {
+                # stop_id intentionally missing
+                "stop_name": "Alewife",
+                "stop_lat": 42.3954,
+                "stop_lon": -71.1425,
+            },
+        ])
+        stops.to_csv(gtfs_dir / "stops.txt", index=False)
+
+        data = GtfsStaticData(gtfs_dir)
+
+        with pytest.raises(
+            ValueError,
+            match=r"Missing required column\(s\) in stops\.txt:.*stop_id",
+        ):
+            data.load()
