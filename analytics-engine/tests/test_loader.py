@@ -11,7 +11,7 @@ import time
 import pandas as pd
 import pytest
 
-from analytics_engine.loader import GtfsStaticData, StopInfo
+from gtfs_static.loader import GtfsStaticData, StopInfo
 
 @pytest.fixture
 def gtfs_dir(tmp_path):
