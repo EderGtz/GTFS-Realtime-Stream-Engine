@@ -38,7 +38,7 @@ too, and this wold cause a re-run detect_bunching_events over the same observati
 that the identical event is emitted a second time, as if it were new.
 
 This was fixed with a small in-memory dedup/update layer (_BunchingEventTracker below), keyed
-by (route_id, direction_id, vehicle_a, vehicle_b, start_time):
+by (route_id, direction_id, vehicle_a, vehicle_b):
 
 - Never seen before                     -> emit as a new event, cache it.
 
@@ -364,8 +364,15 @@ class AnalyticsConsumer:
                 if msg is not None:
                     if msg.error():
                         raise KafkaException(msg.error())
+
+                    value = msg.value()
+
+                    if value is None:
+                        logger.warning("Skipping Kafka message with no value")
+                        continue
+
                     try:
-                        self.buffer.add(json.loads(msg.value().decode("utf-8")))
+                        self.buffer.add(json.loads(value.decode("utf-8")))
                     except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
                         logger.warning("Skipping malformed message.")
 
