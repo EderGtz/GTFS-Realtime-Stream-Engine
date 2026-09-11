@@ -70,7 +70,6 @@ incident-fraction threshold), rather than just treated it as a final decition.
 """
 
 import json
-import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -93,8 +92,9 @@ from metrics.schedule_deviation import (
     compute_departure_deviations,
     to_eastern,
 )
+from utils.logger import get_logger
 
-logger = logging.getLogger("analytics-engine.consumer")
+logger = get_logger("analytics-engine.consumer")
 
 WINDOW_SECONDS = 60
 # Minimum safe value per the previous explanation above. Not padded with extra margin.
