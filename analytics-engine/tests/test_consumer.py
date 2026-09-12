@@ -161,14 +161,15 @@ class TestAnalyticsConsumer:
     @patch("analytics_engine.consumer.GtfsStaticData")
     @patch("analytics_engine.consumer.find_close_pairs")
     @patch("analytics_engine.consumer.compute_arrival_deviations")
-    def test_process_window_error_handling(self, mock_arr, mock_pairs, MockGtfs):
+    @patch("analytics_engine.consumer.compute_departure_deviations")
+    def test_process_window_error_handling(self, mock_dep, mock_arr, mock_pairs, MockGtfs):
         """
-        If a metrics module crashes, the consumer should catch it, log it, 
-        and call the callback with empty lists, avoiding a fatal crash.
+        If bunching crashes, the consumer should catch it, log it, and still compute
+        deviations independently. One metric's failure must not silently take the
+        other down with it, since they're wrapped in separate try/except blocks.
         """
         sink = MagicMock()
         
-        # Initialize Consumer with dummy Kafka config and mock static data
         consumer = AnalyticsConsumer(
             kafka_config={"group.id": "test"}, 
             topic="test", 
@@ -178,19 +179,102 @@ class TestAnalyticsConsumer:
         # Force bunching to crash
         mock_pairs.side_effect = Exception("Bunching Engine Failure")
         mock_arr.return_value = []
+        mock_dep.return_value = []
         
-        # Create a dummy window DataFrame
         df = pd.DataFrame([
-            {"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00")}
+            {
+                "stop_id": "1", 
+                "timestamp_eastern": ets("2026-08-18 10:00:00"), 
+                "current_status": "STOPPED_AT"
+            }
         ])
         
-        # Process the window
         consumer._process_window(df)
         
-        # The sink should have been called EXACTLY ONCE
         assert sink.call_count == 1
+        # Proves the deviation path was actually reached and succeeded on its own,
+        # not just that new_deviations happens to be [] for some other, unverified reason.
+        mock_arr.assert_called_once()
+        mock_dep.assert_called_once()
         
         # Inspect what was sent to the sink
         result: WindowResult = sink.call_args[0][0]
-        assert result.bunching_actions == [] # Handled gracefully!
+        assert result.bunching_actions == []
         assert isinstance(result.new_deviations, list)
+    @patch("analytics_engine.consumer.GtfsStaticData")
+    @patch("analytics_engine.consumer.find_close_pairs")
+    @patch("analytics_engine.consumer.compute_arrival_deviations")
+    def test_process_window_deviation_failure_does_not_affect_bunching(self, mock_arr, mock_pairs, MockGtfs):
+        sink = MagicMock()
+        consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
+
+        mock_arr.side_effect = Exception("Deviation Engine Failure")
+        mock_pairs.return_value = pd.DataFrame()  # empty close_pairs -> detect_bunching_events returns []
+
+        df = pd.DataFrame([{"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00")}])
+        consumer._process_window(df)
+
+        result: WindowResult = sink.call_args[0][0]
+        assert result.bunching_actions == []      # ran cleanly, just had nothing to report
+        assert result.new_deviations == []        # failed and was caught
+        mock_pairs.assert_called_once()           # proves bunching's path actually executed
+
+    def test_process_window_empty_input_never_calls_sink(self):
+        sink = MagicMock()
+        with patch("analytics_engine.consumer.GtfsStaticData"):
+            consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
+
+        consumer._process_window(pd.DataFrame())
+        sink.assert_not_called()
+
+    @patch("analytics_engine.consumer.GtfsStaticData")
+    @patch("analytics_engine.consumer.find_close_pairs")
+    @patch("analytics_engine.consumer.compute_arrival_deviations")
+    @patch("analytics_engine.consumer.compute_departure_deviations")
+    def test_bunching_gets_full_pings_deviation_gets_scoped(self, mock_dep, mock_arr, mock_pairs, MockGtfs):
+        sink = MagicMock()
+        consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
+        mock_arr.return_value, mock_dep.return_value = [], []
+
+        df = pd.DataFrame([
+            {"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00"), "current_status": "STOPPED_AT"},
+            {"stop_id": None, "timestamp_eastern": ets("2026-08-18 10:00:15"), "current_status": "IN_TRANSIT_TO"},
+        ])
+
+        consumer._process_window(df)
+
+        # find_close_pairs must have received BOTH rows -- bunching doesn't need stop_id.
+        bunching_input = mock_pairs.call_args[0][0]
+        assert len(bunching_input) == 2
+
+        # compute_arrival_deviations must have received only the stop_id-resolved row.
+        deviation_input = mock_arr.call_args[0][0]
+        assert len(deviation_input) == 1
+        assert deviation_input.iloc[0]["stop_id"] == "1"
+
+    @patch("analytics_engine.consumer.GtfsStaticData")
+    @patch("analytics_engine.consumer.find_close_pairs")
+    @patch("analytics_engine.consumer.detect_bunching_events")
+    @patch("analytics_engine.consumer.compute_arrival_deviations")
+    @patch("analytics_engine.consumer.compute_departure_deviations")
+    def test_process_window_happy_path_passes_results_through(
+        self, mock_dep, mock_arr, mock_detect, mock_pairs, MockGtfs
+    ):
+        sink = MagicMock()
+        consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
+
+        fake_event = BunchingEvent(route_id="R1", direction_id=0, vehicle_a="A", vehicle_b="B",
+                                    start_time=ets("2026-08-18 10:00:00"), end_time=ets("2026-08-18 10:00:45"),
+                                    observation_count=4, min_distance_meters=15.0)
+        mock_pairs.return_value = pd.DataFrame()
+        mock_detect.return_value = [fake_event]
+        mock_arr.return_value = []
+        mock_dep.return_value = []
+
+        df = pd.DataFrame([{"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00"), "current_status": "STOPPED_AT"}])
+        consumer._process_window(df)
+
+        result: WindowResult = sink.call_args[0][0]
+        assert len(result.bunching_actions) == 1
+        assert result.bunching_actions[0][0] == "new"
+        assert result.bunching_actions[0][1] is fake_event
