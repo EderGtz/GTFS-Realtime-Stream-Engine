@@ -195,7 +195,7 @@ class _BunchingEventTracker:
                     start_time=min(previous.start_time, event.start_time),
                     end_time=event.end_time,
                     observation_count=event.observation_count,
-                    min_distance_meters=event.min_distance_meters,
+                    min_distance_meters=min(previous.min_distance_meters, event.min_distance_meters),
                 )
 
                 actions.append(("update", updated_event))
