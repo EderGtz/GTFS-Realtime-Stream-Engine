@@ -1,7 +1,7 @@
 import pandas as pd
 from unittest.mock import MagicMock, patch
 
-from analytics_engine.consumer import (
+from consumer import (
     PingWindowBuffer,
     _BunchingEventTracker,
     _DeviationResultTracker,
@@ -158,10 +158,10 @@ class TestPingWindowBuffer:
 
 
 class TestAnalyticsConsumer:
-    @patch("analytics_engine.consumer.GtfsStaticData")
-    @patch("analytics_engine.consumer.find_close_pairs")
-    @patch("analytics_engine.consumer.compute_arrival_deviations")
-    @patch("analytics_engine.consumer.compute_departure_deviations")
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.find_close_pairs")
+    @patch("consumer.compute_arrival_deviations")
+    @patch("consumer.compute_departure_deviations")
     def test_process_window_error_handling(self, mock_dep, mock_arr, mock_pairs, MockGtfs):
         """
         If bunching crashes, the consumer should catch it, log it, and still compute
@@ -201,9 +201,9 @@ class TestAnalyticsConsumer:
         result: WindowResult = sink.call_args[0][0]
         assert result.bunching_actions == []
         assert isinstance(result.new_deviations, list)
-    @patch("analytics_engine.consumer.GtfsStaticData")
-    @patch("analytics_engine.consumer.find_close_pairs")
-    @patch("analytics_engine.consumer.compute_arrival_deviations")
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.find_close_pairs")
+    @patch("consumer.compute_arrival_deviations")
     def test_process_window_deviation_failure_does_not_affect_bunching(self, mock_arr, mock_pairs, MockGtfs):
         sink = MagicMock()
         consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
@@ -221,16 +221,16 @@ class TestAnalyticsConsumer:
 
     def test_process_window_empty_input_never_calls_sink(self):
         sink = MagicMock()
-        with patch("analytics_engine.consumer.GtfsStaticData"):
+        with patch("consumer.GtfsStaticData"):
             consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
 
         consumer._process_window(pd.DataFrame())
         sink.assert_not_called()
 
-    @patch("analytics_engine.consumer.GtfsStaticData")
-    @patch("analytics_engine.consumer.find_close_pairs")
-    @patch("analytics_engine.consumer.compute_arrival_deviations")
-    @patch("analytics_engine.consumer.compute_departure_deviations")
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.find_close_pairs")
+    @patch("consumer.compute_arrival_deviations")
+    @patch("consumer.compute_departure_deviations")
     def test_bunching_gets_full_pings_deviation_gets_scoped(self, mock_dep, mock_arr, mock_pairs, MockGtfs):
         sink = MagicMock()
         consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
@@ -252,11 +252,11 @@ class TestAnalyticsConsumer:
         assert len(deviation_input) == 1
         assert deviation_input.iloc[0]["stop_id"] == "1"
 
-    @patch("analytics_engine.consumer.GtfsStaticData")
-    @patch("analytics_engine.consumer.find_close_pairs")
-    @patch("analytics_engine.consumer.detect_bunching_events")
-    @patch("analytics_engine.consumer.compute_arrival_deviations")
-    @patch("analytics_engine.consumer.compute_departure_deviations")
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.find_close_pairs")
+    @patch("consumer.detect_bunching_events")
+    @patch("consumer.compute_arrival_deviations")
+    @patch("consumer.compute_departure_deviations")
     def test_process_window_happy_path_passes_results_through(
         self, mock_dep, mock_arr, mock_detect, mock_pairs, MockGtfs
     ):
