@@ -1,0 +1,33 @@
+name: "CI: Python Integration Tests"
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  integration:
+    name: Kafka + MongoDB Integration
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./analytics-engine
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    - name: Install dependencies
+      run: uv sync
+
+    - name: Run Integration Tests
+      run: uv run pytest tests/test_integration.py -v --timeout=120
