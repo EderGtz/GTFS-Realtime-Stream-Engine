@@ -203,6 +203,8 @@ class GtfsStaticData:
     ) -> dict[tuple[str, int], ScheduledStopTime]:
         lookup: dict[tuple[str, int], ScheduledStopTime] = {}
 
+        has_stop_id = "stop_id" in stop_times_df.columns
+
         for row in stop_times_df.itertuples():
             trip_id = str(row.trip_id)
             stop_sequence = int(row.stop_sequence)
@@ -225,12 +227,18 @@ class GtfsStaticData:
                 if pd.notna(row.departure_time)
                 else None
             )
+            stop_id = (
+                str(row.stop_id)
+                if has_stop_id and pd.notna(row.stop_id)
+                else None
+            )
 
             lookup[key] = ScheduledStopTime(
                 trip_id=trip_id,
                 stop_sequence=stop_sequence,
                 arrival_time=arrival_time,
                 departure_time=departure_time,
+                stop_id=stop_id,
             )
         return lookup
 

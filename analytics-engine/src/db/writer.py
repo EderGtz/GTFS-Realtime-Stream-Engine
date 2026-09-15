@@ -35,15 +35,14 @@ be 5 records on the database, but only one that have been updated.
   pattern as the ingestion side: Kafka's idempotent producer + Mongo's own unique
   index in Phases 1/2, not relying on a single layer).
 
-OPEN DESIGN GAP, not resolved here: the README's Phase 3 plan calls for a 2dsphere
-geospatial index on computed metrics, but neither BunchingEvent nor DeviationResult
-currently carries a lat/lon or GeoJSON location field, and both of them are purely
-identity/time/measurement shaped. Enriching these documents with a location (e.g.
-the stop's coordinates via GtfsStaticData.stops_lookup for deviations, or the
-vehicles' last known position for bunching) would need new plumbing through
-consumer.py before this module could do anything with it. No 2dsphere index is
-created here as a result, and is being flagged rather than silently added unused 
-or silently dropped without comment.
+Design gap resolved: the README's Phase 3 plan called for a 2dsphere
+geospatial index on computed metrics. Deviation documents are now enriched
+with a GeoJSON location field sourced from GTFS-static stop coordinates
+(via stops_lookup, plumbed through consumer.py's _enrich_with_location),
+and a 2dsphere index is created on schedule_deviations.location. Bunching
+documents are NOT enriched -- a vehicle pair has no single natural location,
+and no planned endpoint requires it. This can be revisited if bottleneck
+clustering (Future Work) needs it.
 """
 from __future__ import annotations
 
@@ -157,6 +156,14 @@ def build_deviation_operations(results: list[DeviationResult]) -> list[UpdateOne
             "actual_at": result.actual_at.to_pydatetime(),
             "deviation_seconds": result.deviation_seconds,
         }
+
+        # Location is optional -- only present when stop coordinates
+        # were available from the GTFS-static stops_lookup. Stored as
+        # GeoJSON so the 2dsphere index can serve future geospatial
+        # queries (e.g. "show all delays near this stop").
+        if result.location is not None:
+            document["location"] = result.location
+
         operations.append(UpdateOne(key, {"$set": document}, upsert=True))
 
     return operations
@@ -203,6 +210,14 @@ class MetricsWriter:
              ("stop_sequence", ASCENDING), ("kind", ASCENDING)],
             unique=True,
             name="deviation_natural_key",
+        )
+        # Geospatial index on deviation documents that carry a location
+        # (enriched from GTFS-static stop coordinates in consumer.py).
+        # Enables future queries like "show all delays near this stop"
+        # or "find the closest bunching event to this lat/lon".
+        self.deviation_collection.create_index(
+            [("location", "2dsphere")],
+            name="deviation_location_2dsphere",
         )
 
     def write_bunching_actions(self, actions: list[tuple[str, BunchingEvent]]) -> int:

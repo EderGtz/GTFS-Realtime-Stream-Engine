@@ -73,7 +73,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pandas as pd
@@ -319,6 +319,36 @@ class AnalyticsConsumer:
             # crashing the whole consumer over one bad refresh attempt.
             logger.error("GTFS-static refresh failed, continuing with previous snapshot: %s", err)
 
+    def _enrich_with_location(
+        self, deviations: list[DeviationResult]
+    ) -> list[DeviationResult]:
+        """Attach GeoJSON location to deviation results using stop coordinates
+        from the GTFS-static data. The stop_id comes from stop_times_lookup,
+        and the actual lat/lon from stops_lookup. Silently skips enrichment
+        when either lookup fails (e.g. stop not in stops.txt), so the
+        deviation is still emitted -- just without a location field."""
+        enriched: list[DeviationResult] = []
+        for dev in deviations:
+            scheduled = self.static_data.stop_times_lookup.get(
+                (dev.trip_id, dev.stop_sequence)
+            )
+            if scheduled is None or scheduled.stop_id is None:
+                enriched.append(dev)
+                continue
+
+            stop_info = self.static_data.stops_lookup.get(scheduled.stop_id)
+            if stop_info is None or stop_info.stop_lat is None or stop_info.stop_lon is None:
+                enriched.append(dev)
+                continue
+
+            location = {
+                "type": "Point",
+                "coordinates": [stop_info.stop_lon, stop_info.stop_lat],
+            }
+            enriched.append(replace(dev, location=location))
+
+        return enriched
+
     def _process_window(
             self, 
             pings: pd.DataFrame
@@ -349,6 +379,7 @@ class AnalyticsConsumer:
                 arrival_results + departure_results,
                 reference_time,
             )
+            new_deviations = self._enrich_with_location(new_deviations)
         except Exception:
             logger.exception("Schedule-deviation computation failed for this window, skipping it.")
             new_deviations = []

@@ -49,6 +49,7 @@ class ScheduledStopTime:
     stop_sequence: int
     arrival_time: str | None  # raw GTFS "HH:MM:SS" text; hours may exceed 24
     departure_time: str | None
+    stop_id: str | None = None  # needed for location enrichment (2dsphere index)
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class DeviationResult:
     scheduled_at: pd.Timestamp
     actual_at: pd.Timestamp
     deviation_seconds: float
+    location: dict | None = None  # GeoJSON Point {"type": "Point", "coordinates": [lon, lat]} for 2dsphere indexing
 
 
 def parse_gtfs_time_offset(time_str: str) -> timedelta:
