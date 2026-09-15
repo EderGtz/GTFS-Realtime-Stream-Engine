@@ -23,7 +23,9 @@ dev = [
     "jupyter>=1.1.1",
     "jupyterlab>=4.6.3",
     "pytest>=9.1.1",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.9.0",
+    "testcontainers>=4.15.0",
 ]
 
 [project.scripts]
