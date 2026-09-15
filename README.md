@@ -36,8 +36,9 @@ The goal is to build a real, working end-to-end event-driven system using real p
                                   │  (persisted metrics)
                        ┌────────────────────────┐
                        │       MongoDB          │
-                       │  vehicle_telemetry     │
-                       │  route_analytics       │
+                       │  bunching_events       │
+                       │  schedule_deviations   │
+                       │  (2dsphere on location)│
                        └──────────┬─────────────┘
                                   │
         ┌────────────────────────────────────────────────┐
@@ -55,7 +56,7 @@ The GTFS-Realtime Stream Engine is a decoupled, event-driven pipeline designed t
 1. **Ingestion Layer (Node.js / TypeScript):** A lightweight, fault-tolerant service that polls the MBTA's raw binary Protobuf feed. It handles schema decoding, spatial validation, and data cleaning. Instead of writing directly to a database, it acts purely as a Kafka Producer.
 2. **Streaming Layer (Apache Kafka - KRaft Mode):** It uses a single Kafka broker running in KRaft mode (acting as both broker and controller). It buffers the incoming telemetry into a topic (`raw.vehicle-positions`) with 4 partitions, effectively decoupling the high-frequency ingestion from the heavy analytical processing.
 3. **Analytics Engine (Python / Pandas):** A dedicated Kafka Consumer that reads telemetry in batches. It loads static GTFS schedules into memory, performs spatial and temporal joins, and calculates high-value metrics like schedule deviation and vehicle bunching.
-4. **Storage Layer (MongoDB):** Acts as a sink for the processed analytics. It utilizes `2dsphere` indexes to allow for future geospatial querying of delays and bottlenecks.
+4. **Storage Layer (MongoDB):** Acts as a sink for the processed analytics. Bunching events and schedule deviations are persisted via idempotent upserts backed by unique natural-key indexes. Schedule deviation documents are enriched with stop coordinates and indexed with a `2dsphere` geospatial index for future location-based queries.
 5. **Serving API (Node.js / Express):** A thin REST interface that reads the processed metrics from MongoDB and serves them to end clients, completely isolated from the complexities of the ingestion and processing pipelines.
 
 ## Tech Stack
@@ -64,8 +65,8 @@ The GTFS-Realtime Stream Engine is a decoupled, event-driven pipeline designed t
 |---|---|---|
 | Ingestion | TypeScript, Node.js, `protobufjs` or `gtfs-realtime-bindings` | Poll the MBTA GTFS-RT feed, decode binary Protobuf into typed objects, validate, publish to Kafka |
 | Event Broker | Apache Kafka, Docker | Decouple ingestion cadence from analytics processing; buffer against feed hiccups |
-| Analytics Engine | Python 3.11+, `confluent-kafka`, `pandas`, `shapely` | Join real-time pings against static schedule data, compute delay/bunching, explore the data before finalizing metrics |
-| Data Store | MongoDB | Geospatially indexed (`2dsphere`) telemetry and analytics storage |
+| Analytics Engine | Python 3.12+, `confluent-kafka`, `pandas`, `numpy` | Join real-time pings against static schedule data, compute delay/bunching, explore the data before finalizing metrics |
+| Data Store | MongoDB | Bunching events and schedule deviations persisted via idempotent upserts; `2dsphere` geospatial index on deviation locations |
 | Serving API | TypeScript, Node.js, Express | REST endpoint exposing computed metrics |
 | Runtime | Docker Compose, small VPS/cloud VM | Full stack running continuously to test the code working in production |
 
@@ -117,10 +118,10 @@ By the end of Phase 1, there should be a small but real collection of live vehic
 
 #### Live Demo
 
-![Terminal Ingestion Demo](docs/phase1_demo.gif)
+![Terminal Ingestion Demo](docs/img/phase1_demo.gif)
 *Live ingestion logs filtering duplicates and malformed data.*
 
-![MongoDB Telemetry View](docs/phase1_mongo.png)
+![MongoDB Telemetry View](docs/img/phase1_mongo.png)
 *VSCode MongoDB extension showing the 2dsphere indexed telemetry documents.*
 
 ### Phase 2 — Event Streaming Layer (Apache Kafka)
@@ -144,13 +145,13 @@ It is relevant to mention that this phase **does not keep track** of duplicated 
 
 #### Live Demo
 
-![Docker Compose and live ingestion](docs/phase2_compose.gif)
+![Docker Compose and live ingestion](docs/img/phase2_compose.gif)
 *Starts the GTFS streaming stack with Docker Compose, waits for Kafka to become healthy, then launches the ingestion service, continuously publishing MBTA vehicle telemetry.*
 
-![Kafka round-trip integration test](docs/phase2_roundtrip.gif)
+![Kafka round-trip integration test](docs/img/phase2_roundtrip.gif)
 *Runs the Kafka round-trip integration test against the real broker. A test telemetry message is published through the production Kafka pipeline, consumed from raw.vehicle-positions, parsed as JSON, and validated against the expected schema.*
 
-![Kafka round-trip integration test](docs/phase2_kafkaUI.png)
+![Kafka round-trip integration test](docs/img/phase2_kafkaUI.png)
 *Kafbat UI showing the raw.vehicle-positions Kafka topic populated with telemetry messages.*
 
 ### Phase 3 — Analytics Engine (Python + pandas)
@@ -170,17 +171,21 @@ The MVP settles on two:
 
 Note: **The distance and time-window thresholds that define "too close together" are decided here, from real inspected MBTA spacing/headway patterns — not guessed in advance.** For example: two vehicles on the same route/direction within X meters, where the actual headway ratio is below Y times the scheduled headway. Real X/Y values get set once the exploration step above has actually happened.
 
-Computed results are written to MongoDB with a `2dsphere` geospatial index, so they can be queried by location later.
+Computed results are written to MongoDB. Schedule deviation documents are enriched with stop coordinates from GTFS-static data and indexed with a `2dsphere` geospatial index, so they can be queried by location later. Bunching events are persisted without location (a vehicle pair has no single natural location).
 
 **Testing:** unit tests for the schedule-deviation calculation and the bunching-detection logic, run against fixed synthetic inputs with known expected outputs — this is where correctness matters most, since these numbers are the entire point of the project.
 
 **Acceptance criteria:**
-- [ ] GTFS-static data loads correctly and is queryable by `trip_id`/`stop_id`
-- [ ] Static data refresh triggers correctly when the schedule version changes (can be tested with a manual version bump before relying on MBTA's real cadence)
-- [ ] Schedule deviation is computed correctly for a known real trip, spot-checked by hand
-- [ ] Bunching thresholds are set from real observed data, documented here in this README once decided
-- [ ] Bunching detection correctly flags a known real bunched pair and does not flag a known well-spaced pair
-- [ ] Unit tests for metrics pass in CI
+- [x] GTFS-static data loads correctly and is queryable by `trip_id`/`stop_id` — validated by `test_loader.py` (19 tests covering direction lookup, stop_times lookup, stops lookup, alphanumeric trip IDs, schema validation, atomic reload, version detection)
+- [x] Static data refresh triggers correctly when the schedule version changes — validated by `test_loader.py::TestHasChanged` (feed_version change detection, file-fingerprint fallback, reload-if-changed)
+- [x] Schedule deviation is computed correctly for a known real trip, spot-checked by hand — validated by `test_schedule_deviation.py` (12 tests covering GTFS time parsing, midnight-crossing resolution, timezone conversion, first-arrival collapsing, arrival/departure separation)
+- [x] Bunching thresholds are set from real observed data — `DISTANCE_THRESHOLD_METERS=100` and `MIN_CONSECUTIVE_OBSERVATIONS=2`, set via notebook 04's sensitivity sweep (operationally anchored at ~5-8 bus-lengths; smooth gradient with no sharp cliff at this resolution)
+- [x] Bunching detection correctly flags a known real bunched pair and does not flag a known well-spaced pair — validated by `test_bunching.py` (10 tests covering close-pair detection, direction exclusion, route exclusion, distance threshold, bucket-collision dedup, persistence requirement, event splitting)
+- [x] Unit tests for metrics pass in CI — 94 unit tests across `test_schedule_deviation.py`, `test_bunching.py`, `test_loader.py`, `test_consumer.py`, `test_writer.py`; CI workflow: `analytics-tests.yml`
+- [x] Computed deviation results carry stop coordinates for geospatial indexing — `DeviationResult.location` enriched from GTFS-static `stops_lookup` via `consumer.py::_enrich_with_location`; 2dsphere index created on `schedule_deviations.location` in `writer.py`; validated by `test_consumer.py::TestLocationEnrichment` (6 tests) and `test_integration.py::TestMongoDBPersistence::test_deviation_with_location_persists_geojson`
+- [x] At-least-once delivery guarantee is implemented and tested — manual `commit(asynchronous=False)` gated on `persist_window` success; validated by `test_consumer.py::TestCommitGating` (5 tests covering success→commit, failure→skip, empty→skip, per-window gating, clean shutdown)
+- [x] Integration tests verify real Kafka and MongoDB infrastructure — 8 tests in `test_integration.py` using testcontainers (Kafka roundtrip, MongoDB indexes/upserts/2dsphere, end-to-end pipeline); CI workflow: `python-integration-tests.yml`
+- [ ] Sustained-outage behavior and other known tradeoffs are documented — see [Known Limitations](#known-limitations) section and `docs/guarantees.md`
 
 ### Phase 4 — Serving API (TypeScript / Express)
 
@@ -218,6 +223,22 @@ Everything before this phase can be developed and demoed locally, but "let it ru
 - [ ] Pipeline has run continuously and unattended for at least several consecutive days
 - [ ] CI runs the complete test suite (all phases) on every push
 - [ ] This README's Status section is updated with real numbers: uptime achieved, records processed, and a GIF demo
+
+## Known Limitations
+
+These are deliberate, documented tradeoffs. They are the current state of an MVP that favors shipping working software over solving every edge case upfront.
+
+**Sustained MongoDB outage causes indefinite retry with no backoff.** If MongoDB goes down for an extended period, the consumer's commit-gating (see `docs/guarantees.md`) prevents data loss by not advancing the Kafka offset. However, the same window's data gets recomputed and reattempted every cycle indefinitely — there is no exponential backoff, circuit breaker, or eventual "give up on this window" behavior. This is an accepted MVP tradeoff; the consumer will recover automatically when MongoDB comes back, but it will consume CPU cycles recomputing the same metrics during the outage.
+
+**Messages published during a consumer restart are missed.** The consumer uses `auto.offset.reset = "latest"`, meaning a restart picks up from the current tail of the topic. Any messages published between the last committed offset and the restart are not replayed. The alternative (`"earliest"`) would replay up to 72 hours of retained backlog on every restart, which is worse for an always-on consumer. The gap is accepted as a documented limitation for this MVP.
+
+**Overlap boundary assumption.** The time-windowed-with-overlap strategy (see `consumer.py` module docstring) requires `OVERLAP_SECONDS >= MIN_CONSECUTIVE_OBSERVATIONS * POLL_INTERVAL_SECONDS`. The default configuration satisfies this exactly (30s = 2 × 15s), but with no extra margin. If either threshold changes without the other, boundary-crossing bunching events could be silently missed.
+
+**Poll-interval bucket jitter can split continuous bunching events.** Real MBTA update cadence has jitter around the nominal 15-second interval (notebook 01 found a median of ~16s). Bucketing timestamps to a fixed poll-interval grid can split one real, continuous bunching event into two shorter ones if two vehicles' actual poll times straddle a bucket boundary. This is a known accuracy limitation, not a correctness bug.
+
+**Departure deviation proxy is not empirically validated.** `compute_departure_deviations()` uses the last `STOPPED_AT` ping before a vehicle transitions away from a stop as a proxy for the actual departure moment. Unlike arrival-collapsing (which was validated in notebook 03), this specific technique was never checked against real data. Treat it as a reasonable engineering extension pending its own empirical validation.
+
+**No cross-document atomicity.** `persist_window` writes bunching events and schedule deviations in separate `bulk_write` calls. If the second write fails after the first succeeds, the Kafka offset is not committed, and the idempotent upsert design ensures the retry converges to the correct state — but the two collections are never atomically consistent within a single window. See `docs/guarantees.md` for the full delivery and persistence model.
 
 ## Where the Data Could Go From Here
 
@@ -284,37 +305,57 @@ gtfs-realtime-stream-engine/
 │           └── delays.test.ts      # Phase 4 — integration test, seeded test DB
 │
 ├── analytics-engine/               # Phase 3 — Python
-│   ├── pyproject.toml (or requirements.txt)
+│   ├── pyproject.toml
 │   ├── .env                        # Mongo URI, Kafka broker (gitignored)
 │   ├── src/
-│   │   ├── main.py                 # Entry point: starts Kafka consumer loop
-│   │   ├── config.py
+│   │   ├── main.py                 # Entry point: wires config, writer, consumer, graceful shutdown
+│   │   ├── config.py               # Environment-based configuration, fail-loud on missing values
 │   │   │
-│   │   ├── consumer.py             # Kafka consumer (confluent-kafka), reads raw.vehicle-positions
+│   │   ├── consumer.py             # Kafka consumer, time-windowed batching, dedup/update trackers
 │   │   ├── gtfs_static/
-│   │   │   ├── loader.py           # Loads stops.txt / trips.txt / stop_times.txt into memory
-│   │   │   └── refresh.py          # Periodic schedule-version check & reload
+│   │   │   └── loader.py           # Atomic-reload GTFS-static loader, version-check refresh
 │   │   │
 │   │   ├── metrics/
-│   │   │   ├── schedule_deviation.py
-│   │   │   └── bunching.py         # Thresholds set from real MBTA data exploration
+│   │   │   ├── schedule_deviation.py  # Arrival/departure deviation, GTFS time parsing
+│   │   │   └── bunching.py            # Vectorized pair-finding, persistence-based detection
 │   │   │
-│   │   └── db/
-│   │       └── writer.py           # Writes computed metrics to MongoDB (2dsphere indexed)
+│   │   ├── db/
+│   │   │   └── writer.py           # MongoDB upsert persistence, 2dsphere index on deviations
+│   │   │
+│   │   └── utils/
+│   │       └── logger.py           # Structured logging
 │   │
 │   ├── notebooks/
-│   │   └── exploration.ipynb       # Phase 3 exploration step: DataFrame inspection before finalizing metrics
+│   │   ├── final/                   # Gate-passing, rerun against clean data
+│   │   │   ├── 01_data_quality_and_frequency.ipynb
+│   │   │   ├── 02_stop_matching.ipynb
+│   │   │   ├── 03_schedule_deviation.ipynb
+│   │   │   └── 04_bunching.ipynb
+│   │   └── exploratory/             # Initial exploration drafts
 │   │
 │   └── tests/
 │       ├── test_schedule_deviation.py
-│       └── test_bunching.py        # Synthetic fixed inputs, known expected outputs
+│       ├── test_bunching.py
+│       ├── test_loader.py
+│       ├── test_consumer.py
+│       ├── test_writer.py
+│       └── test_integration.py     # Kafka + MongoDB via testcontainers
 │
 ├── docs/
-│   └── demo.gif                    # Phase 4 — recorded curl/terminal demo (no frontend in this MVP)
+│   ├── guarantees.md               # System guarantees: delivery, persistence, ordering
+│   └── final/
+│       ├── phase1_demo.gif             # Phase 1 live ingestion demo
+│       ├── phase1_mongo.png            # Phase 1 MongoDB view
+│       ├── phase2_compose.gif          # Phase 2 Docker Compose demo
+│       ├── phase2_roundtrip.gif        # Phase 2 Kafka roundtrip test
+│       └── phase2_kafkaUI.png          # Phase 2 Kafbat UI
 │
 └── .github/
     └── workflows/
-        └── ci.yml                  # Runs both services' test suites on every push (Phase 1 onward)
+        ├── unit-tests.yml          # CI: ingestion service unit tests
+        ├── integration-tests.yml   # CI: Kafka integration (Docker Compose)
+        ├── analytics-tests.yml     # CI: analytics engine lint + unit tests
+        └── python-integration-tests.yml  # CI: analytics engine integration (testcontainers)
 ```
 
 **Why two services and not one:** the whole architectural point of this project is that ingestion (TypeScript, I/O-bound polling) and analytics (Python, pandas/data-shape work) are genuinely different workloads decoupled by Kafka. `ingestion-service` also owns the serving API (Phase 4), since it's the same runtime that already talks to MongoDB and Express; there's no reason to add a third service just to expose one endpoint.
@@ -346,8 +387,8 @@ flowchart TD
     end
 
     subgraph STORE["Data Store — MongoDB"]
-        VT[("vehicle_telemetry\n(2dsphere indexed)")]
-        RA[("route_analytics")]
+        BUNCHING[("bunching_events")]
+        DEVIATIONS[("schedule_deviations\n(2dsphere on location)")]
     end
 
     subgraph P4["Phase 4 — Serving API (Express)"]
@@ -364,12 +405,10 @@ flowchart TD
     TOPIC --> CONSUME
     STATIC --> JOIN
     CONSUME --> JOIN
-    JOIN --> DELAY --> VT
-    JOIN --> BUNCH --> VT
-    DELAY --> RA
-    BUNCH --> RA
-    VT --> API
-    RA --> API
+    JOIN --> DELAY --> DEVIATIONS
+    JOIN --> BUNCH --> BUNCHING
+    DEVIATIONS --> API
+    BUNCHING --> API
     API --> DEMO
     P1 -.-> CI
     P2 -.-> CI
