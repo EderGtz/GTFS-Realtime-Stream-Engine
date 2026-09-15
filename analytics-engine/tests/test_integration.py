@@ -165,7 +165,7 @@ class TestMongoDBPersistence:
             for idx in writer.deviation_collection.list_indexes()
         }
 
-        assert "C" in bunching_indexes
+        assert "bunching_natural_key" in bunching_indexes
         assert "deviation_natural_key" in deviation_indexes
         assert "deviation_location_2dsphere" in deviation_indexes
 
