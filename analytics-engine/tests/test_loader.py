@@ -13,6 +13,7 @@ import pytest
 
 from gtfs_static.loader import GtfsStaticData, StopInfo
 
+
 @pytest.fixture
 def gtfs_dir(tmp_path):
     """A minimal, valid 3-file GTFS bundle, plus one deliberately messy row per
@@ -31,9 +32,9 @@ def gtfs_dir(tmp_path):
     trips.to_csv(tmp_path / "trips.txt", index=False)
 
     stop_times = pd.DataFrame([
-        {"trip_id": "12345678", "stop_sequence": 1, "arrival_time": None, "departure_time": "08:00:00"},
-        {"trip_id": "12345678", "stop_sequence": 2, "arrival_time": "08:05:00", "departure_time": "08:05:30"},
-        {"trip_id": "ADDED-1584904727", "stop_sequence": 1, "arrival_time": "25:10:00", "departure_time": "25:10:30"},
+        {"trip_id": "12345678", "stop_sequence": 1, "arrival_time": None, "departure_time": "08:00:00", "stop_id": "70001"},
+        {"trip_id": "12345678", "stop_sequence": 2, "arrival_time": "08:05:00", "departure_time": "08:05:30", "stop_id": "70002"},
+        {"trip_id": "ADDED-1584904727", "stop_sequence": 1, "arrival_time": "25:10:00", "departure_time": "25:10:30", "stop_id": "70001"},
     ])
     stop_times.to_csv(tmp_path / "stop_times.txt", index=False)
 
@@ -72,6 +73,33 @@ class TestLoad:
         entry = data.stop_times_lookup[("12345678", 2)]
         assert entry.arrival_time == "08:05:00"
         assert entry.departure_time == "08:05:30"
+
+    def test_stop_id_is_loaded_from_stop_times(self, gtfs_dir):
+        """stop_id is needed for location enrichment (2dsphere index)."""
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+
+        assert data.stop_times_lookup[("12345678", 1)].stop_id == "70001"
+        assert data.stop_times_lookup[("12345678", 2)].stop_id == "70002"
+        assert data.stop_times_lookup[("ADDED-1584904727", 1)].stop_id == "70001"
+
+    def test_stop_id_is_none_when_column_missing(self, tmp_path):
+        """Graceful fallback when stop_times.txt has no stop_id column."""
+        stops = pd.DataFrame([{"stop_id": "70001", "stop_name": "Alewife"}])
+        stops.to_csv(tmp_path / "stops.txt", index=False)
+
+        trips = pd.DataFrame([{"trip_id": "t1", "route_id": "R1", "direction_id": 0}])
+        trips.to_csv(tmp_path / "trips.txt", index=False)
+
+        stop_times = pd.DataFrame([
+            {"trip_id": "t1", "stop_sequence": 1, "arrival_time": "08:00:00", "departure_time": "08:00:30"},
+        ])
+        stop_times.to_csv(tmp_path / "stop_times.txt", index=False)
+
+        data = GtfsStaticData(tmp_path)
+        data.load()
+
+        assert data.stop_times_lookup[("t1", 1)].stop_id is None
 
     def test_blank_arrival_time_is_none_not_a_string(self, gtfs_dir):
         # Trip-origin stops commonly have only a departure_time -- schedule_deviation.py
