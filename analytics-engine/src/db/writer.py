@@ -45,8 +45,10 @@ consumer.py before this module could do anything with it. No 2dsphere index is
 created here as a result, and is being flagged rather than silently added unused 
 or silently dropped without comment.
 """
+from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING, TypedDict
 
 from pymongo import ASCENDING, MongoClient, UpdateOne
 from pymongo.collection import Collection
@@ -55,6 +57,9 @@ from pymongo.errors import PyMongoError
 from metrics.bunching import BunchingEvent
 from metrics.schedule_deviation import DeviationResult
 from utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from consumer import WindowResult
 
 logger = get_logger("analytics-engine.writer")
 
@@ -156,6 +161,10 @@ def build_deviation_operations(results: list[DeviationResult]) -> list[UpdateOne
 
     return operations
 
+class PersistWindowResult(TypedDict):
+    bunching_written: int
+    deviations_written: int
+    success: bool
 
 class MetricsWriter:
     """
@@ -166,8 +175,7 @@ class MetricsWriter:
         writer = MetricsWriter(mongo_uri)
 
         def on_window_result(result: WindowResult) -> None:
-            writer.write_bunching_actions(result.bunching_actions)
-            writer.write_deviation_results(result.new_deviations)
+            persist_window_result = writer.persist_window(result)
 
         consumer = AnalyticsConsumer(..., on_window_result=on_window_result)
     """
@@ -222,6 +230,19 @@ class MetricsWriter:
         except PyMongoError:
             logger.exception("Failed to write %d deviation result(s) to MongoDB.", len(results))
             return 0
+
+    def persist_window(self, result: WindowResult) -> PersistWindowResult:
+        bunching_total = len(result.bunching_actions)
+        deviation_total = len(result.new_deviations)
+
+        bunching_written = self.write_bunching_actions(result.bunching_actions)
+        deviation_written = self.write_deviation_results(result.new_deviations)
+        
+        return {
+            "bunching_written": bunching_written,
+            "deviations_written": deviation_written,
+            "success": (bunching_written == bunching_total) and (deviation_written == deviation_total)
+        }
 
     def close(self) -> None:
         self.client.close()

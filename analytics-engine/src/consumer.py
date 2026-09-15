@@ -68,6 +68,7 @@ extra margin. This would be worth revisiting with real production data the same 
 threshold in this project was (notebook 04's sensitivity sweep, notebook 01's
 incident-fraction threshold), rather than just treated it as a final decition.
 """
+from __future__ import annotations
 
 import json
 import time
@@ -78,6 +79,7 @@ from pathlib import Path
 import pandas as pd
 from confluent_kafka import Consumer, KafkaException
 
+from db.writer import PersistWindowResult
 from gtfs_static.loader import GtfsStaticData
 from metrics.bunching import (
     MIN_CONSECUTIVE_OBSERVATIONS,
@@ -97,7 +99,6 @@ from utils.logger import get_logger
 logger = get_logger("analytics-engine.consumer")
 
 WINDOW_SECONDS = 60
-# Minimum safe value per the previous explanation above. Not padded with extra margin.
 OVERLAP_SECONDS = MIN_CONSECUTIVE_OBSERVATIONS * POLL_INTERVAL_SECONDS
 
 # How long a dedup/tracker entry is kept before being purged, bounding memory growth
@@ -277,7 +278,7 @@ class AnalyticsConsumer:
         kafka_config: dict,
         topic: str,
         gtfs_dir: Path | str | None = None,
-        on_window_result: Callable[[WindowResult], None] | None = None,
+        on_window_result: Callable[[WindowResult], PersistWindowResult] | None = None,
         window_seconds: int = WINDOW_SECONDS,
         gtfs_refresh_interval_seconds: int = GTFS_REFRESH_INTERVAL_SECONDS,
     ):
@@ -295,11 +296,12 @@ class AnalyticsConsumer:
         self.bunching_tracker = _BunchingEventTracker()
         self.deviation_tracker = _DeviationResultTracker()
 
-    def _default_sink(self, result: WindowResult) -> None:
+    def _default_sink(self, result: WindowResult) -> dict[str, bool]:
         logger.info(
             "Window produced %d bunching action(s), %d new deviation result(s)",
             len(result.bunching_actions), len(result.new_deviations),
         )
+        return {"success": True}
 
     def _maybe_refresh_gtfs_static(self) -> None:
         now = time.time()
@@ -317,9 +319,13 @@ class AnalyticsConsumer:
             # crashing the whole consumer over one bad refresh attempt.
             logger.error("GTFS-static refresh failed, continuing with previous snapshot: %s", err)
 
-    def _process_window(self, pings: pd.DataFrame) -> None:
+    def _process_window(
+            self, 
+            pings: pd.DataFrame
+        ) -> PersistWindowResult | dict[str, bool] | None:
+        
         if pings.empty:
-            return
+            return None
         reference_time = pings["timestamp_eastern"].max()
         scoped = pings[pings["stop_id"].notna()].copy()  # notebook 02, Section C
 
@@ -339,7 +345,6 @@ class AnalyticsConsumer:
         try:
             arrival_results = compute_arrival_deviations(scoped, self.static_data.stop_times_lookup)
             departure_results = compute_departure_deviations(scoped, self.static_data.stop_times_lookup)
-
             new_deviations = self.deviation_tracker.filter_new(
                 arrival_results + departure_results,
                 reference_time,
@@ -348,12 +353,21 @@ class AnalyticsConsumer:
             logger.exception("Schedule-deviation computation failed for this window, skipping it.")
             new_deviations = []
 
-        self.on_window_result(WindowResult(bunching_actions=bunching_actions, new_deviations=new_deviations))
+        return self.on_window_result(
+            WindowResult(
+                bunching_actions=bunching_actions, 
+                new_deviations=new_deviations
+                )
+            )
 
     def run(self) -> None:
         self.consumer.subscribe([self.topic])
-        logger.info("Consumer started on topic '%s', window=%ds, overlap=%ds",
-                     self.topic, self.window_seconds, self.buffer.overlap_seconds)
+        logger.info(
+            "Consumer started on topic '%s', window=%ds, overlap=%ds",
+            self.topic, 
+            self.window_seconds, 
+            self.buffer.overlap_seconds
+        )
 
         last_window_flush = time.time()
 
@@ -375,15 +389,21 @@ class AnalyticsConsumer:
                         self.buffer.add(json.loads(value.decode("utf-8")))
                     except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
                         logger.warning("Skipping malformed message.")
+                        continue
 
                 self._maybe_refresh_gtfs_static()
 
                 if time.time() - last_window_flush >= self.window_seconds:
                     window_pings = self.buffer.flush()
-                    self._process_window(window_pings)
+                    persist_result = self._process_window(window_pings)
+
+                    if persist_result is not None:
+                        if persist_result.get("success"):
+                            self.consumer.commit(asynchronous=False)
+                        else:
+                            logger.warning("Failed while trying to store in Mongo. Retrying")
+
                     last_window_flush = time.time()
 
-        except KeyboardInterrupt:
-            logger.info("Consumer stopped manually.")
         finally:
             self.consumer.close()
