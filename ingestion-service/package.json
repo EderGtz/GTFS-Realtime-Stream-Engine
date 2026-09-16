@@ -13,7 +13,8 @@
     "generate:types": "mkdir -p src/generated && pbjs -t static-module -w es6 -o src/generated/gtfs-realtime.js src/proto/gtfs-realtime.proto && pbts -o src/generated/gtfs-realtime.d.ts src/generated/gtfs-realtime.js",
     "generate:containers": "cd .. && docker compose up -d",
     "test": "vitest run --exclude tests/integration",
-    "test:integration": "vitest run tests/integration"
+    "test:integration": "vitest run tests/integration",
+    "start:api": "tsx --env-file=.env src/api/index.ts"
   },
   "keywords": [],
   "author": "",
