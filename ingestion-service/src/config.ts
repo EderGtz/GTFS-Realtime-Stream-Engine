@@ -12,6 +12,10 @@ function envOrThrow(key: string): string {
     return value;
 }
 
+function envOrDefault(key: string, fallback: string): string {
+    return process.env[key] ?? fallback;
+}
+
 export const config = {
     mbta: {
         vehiclePositionsUrl: "https://cdn.mbta.com/realtime/VehiclePositions.pb",
@@ -20,7 +24,14 @@ export const config = {
         brokers: [envOrThrow("KAFKA_BROKER")],
         topic: "raw.vehicle-positions",
         numPartitions: 4,
-    }
+    },
+    mongo: {
+        uri: envOrThrow("MONGO_URI"),
+        database: "gtfs_realtime",
+    },
+    api: {
+        port: parseInt(envOrDefault("API_PORT", "3000"), 10),
+    },
 };
 
 export interface IVehicleTelemetry {
