@@ -1,4 +1,5 @@
 import json
+import time
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -616,3 +617,187 @@ class TestCommitGating:
             consumer.run()
 
         mock_kafka.close.assert_called_once()
+
+
+class TestPersistBackoff:
+    """Tests for the exponential backoff behavior when MongoDB persist fails.
+    The consumer should back off from persist attempts with increasing delays,
+    while continuing to poll Kafka to maintain consumer-group membership."""
+
+    VALID_PING = json.dumps({
+        "vehicle_id": "v1", "trip_id": "t1", "route_id": "R1",
+        "lat": 42.0, "lon": -71.0, "stop_id": "s1",
+        "current_stop_sequence": 1, "current_status": "STOPPED_AT",
+        "timestamp_eastern": "2026-08-18 10:00:00",
+    }).encode()
+
+    def _make_kafka_message(self):
+        msg = MagicMock()
+        msg.error.return_value = None
+        msg.value.return_value = self.VALID_PING
+        return msg
+
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.Consumer")
+    def test_backoff_state_starts_clean(self, MockKafka, MockGtfs):
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"},
+            topic="test",
+            on_window_result=MagicMock(),
+        )
+        assert consumer._consecutive_failures == 0
+        assert consumer._backoff_until == 0.0
+        assert not consumer._in_backoff()
+
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.Consumer")
+    def test_enter_backoff_increases_delay(self, MockKafka, MockGtfs):
+        """Each consecutive failure should roughly double the base delay."""
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"},
+            topic="test",
+            on_window_result=MagicMock(),
+            retry_base_seconds=1.0,
+            retry_max_seconds=60.0,
+            retry_jitter_seconds=0.0,  # no jitter for deterministic test
+        )
+
+        # First failure: delay ≈ 1.0 * 2^0 = 1.0s
+        consumer._enter_backoff()
+        assert consumer._consecutive_failures == 1
+        delay1 = consumer._backoff_until - time.time()
+        assert 0.8 <= delay1 <= 1.2
+
+        # Second failure: delay ≈ 1.0 * 2^1 = 2.0s
+        consumer._enter_backoff()
+        assert consumer._consecutive_failures == 2
+        delay2 = consumer._backoff_until - time.time()
+        assert 1.8 <= delay2 <= 2.2
+
+        # Third failure: delay ≈ 1.0 * 2^2 = 4.0s
+        consumer._enter_backoff()
+        assert consumer._consecutive_failures == 3
+        delay3 = consumer._backoff_until - time.time()
+        assert 3.8 <= delay3 <= 4.2
+
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.Consumer")
+    def test_backoff_capped_at_max(self, MockKafka, MockGtfs):
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"},
+            topic="test",
+            on_window_result=MagicMock(),
+            retry_base_seconds=1.0,
+            retry_max_seconds=5.0,
+            retry_jitter_seconds=0.0,
+        )
+
+        # Simulate many failures to exceed max
+        for _ in range(20):
+            consumer._enter_backoff()
+
+        # The backoff delay should never exceed max + jitter
+        # Since jitter is 0, the delay from the last call should be <= 5.0
+        assert consumer._consecutive_failures == 20
+
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.Consumer")
+    def test_reset_backoff_clears_state(self, MockKafka, MockGtfs):
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"},
+            topic="test",
+            on_window_result=MagicMock(),
+        )
+        consumer._enter_backoff()
+        consumer._enter_backoff()
+        assert consumer._consecutive_failures == 2
+        assert consumer._in_backoff()
+
+        consumer._reset_backoff()
+        assert consumer._consecutive_failures == 0
+        assert consumer._backoff_until == 0.0
+        assert not consumer._in_backoff()
+
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.find_close_pairs")
+    @patch("consumer.detect_bunching_events")
+    @patch("consumer.compute_arrival_deviations")
+    @patch("consumer.compute_departure_deviations")
+    @patch("consumer.Consumer")
+    def test_run_skips_persist_during_backoff(
+        self, MockKafka, mock_dep, mock_arr, mock_detect, mock_pairs, MockGtfs
+    ):
+        """When in backoff, the consumer should skip _process_window entirely
+        and NOT call commit."""
+        mock_kafka = MockKafka.return_value
+        mock_kafka.poll.side_effect = [
+            self._make_kafka_message(),  # first window: message -> persist fails -> enter backoff
+            self._make_kafka_message(),  # second window: in backoff -> skip persist
+            KeyboardInterrupt,
+        ]
+        mock_pairs.return_value = pd.DataFrame()
+        mock_detect.return_value = []
+        mock_arr.return_value = []
+        mock_dep.return_value = []
+
+        sink = MagicMock(return_value={
+            "success": False, "bunching_written": 0, "deviations_written": 0,
+        })
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"},
+            topic="test",
+            on_window_result=sink,
+            window_seconds=0,
+            retry_base_seconds=10.0,  # long backoff so second window is definitely in backoff
+            retry_jitter_seconds=0.0,
+        )
+
+        with pytest.raises(KeyboardInterrupt):
+            consumer.run()
+
+        # The sink (on_window_result) should only be called ONCE (first window),
+        # not on the second window where backoff is active.
+        assert sink.call_count == 1
+        mock_kafka.commit.assert_not_called()
+
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.find_close_pairs")
+    @patch("consumer.detect_bunching_events")
+    @patch("consumer.compute_arrival_deviations")
+    @patch("consumer.compute_departure_deviations")
+    @patch("consumer.Consumer")
+    def test_run_resets_backoff_on_recovery(
+        self, MockKafka, mock_dep, mock_arr, mock_detect, mock_pairs, MockGtfs
+    ):
+        """After a failure followed by success, backoff should reset."""
+        mock_kafka = MockKafka.return_value
+
+        fail_result = {"success": False, "bunching_written": 0, "deviations_written": 0}
+        ok_result = {"success": True, "bunching_written": 0, "deviations_written": 0}
+
+        mock_kafka.poll.side_effect = [
+            self._make_kafka_message(),  # window 1: fail -> enter backoff
+            self._make_kafka_message(),  # window 2: backoff expired -> succeed -> reset
+            KeyboardInterrupt,
+        ]
+        mock_pairs.return_value = pd.DataFrame()
+        mock_detect.return_value = []
+        mock_arr.return_value = []
+        mock_dep.return_value = []
+
+        sink = MagicMock(side_effect=[fail_result, ok_result])
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"},
+            topic="test",
+            on_window_result=sink,
+            window_seconds=0,
+            retry_base_seconds=0.0,  # instant backoff expiry so window 2 retries
+            retry_jitter_seconds=0.0,
+        )
+
+        with pytest.raises(KeyboardInterrupt):
+            consumer.run()
+
+        assert sink.call_count == 2
+        mock_kafka.commit.assert_called_once_with(asynchronous=False)
+        assert consumer._consecutive_failures == 0

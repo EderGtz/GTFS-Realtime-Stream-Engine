@@ -79,6 +79,9 @@ def main() -> None:
         kafka_config=kafka_config,
         topic=config.kafka_topic,
         on_window_result=on_window_result,
+        retry_base_seconds=config.mongo_retry_base_seconds,
+        retry_max_seconds=config.mongo_retry_max_seconds,
+        retry_jitter_seconds=config.mongo_retry_jitter_seconds,
     )
 
     try:

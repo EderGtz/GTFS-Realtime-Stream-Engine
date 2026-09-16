@@ -71,6 +71,7 @@ incident-fraction threshold), rather than just treated it as a final decition.
 from __future__ import annotations
 
 import json
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -281,6 +282,9 @@ class AnalyticsConsumer:
         on_window_result: Callable[[WindowResult], PersistWindowResult] | None = None,
         window_seconds: int = WINDOW_SECONDS,
         gtfs_refresh_interval_seconds: int = GTFS_REFRESH_INTERVAL_SECONDS,
+        retry_base_seconds: float = 1.0,
+        retry_max_seconds: float = 60.0,
+        retry_jitter_seconds: float = 1.0,
     ):
         self.consumer = Consumer(kafka_config)
         self.topic = topic
@@ -296,12 +300,48 @@ class AnalyticsConsumer:
         self.bunching_tracker = _BunchingEventTracker()
         self.deviation_tracker = _DeviationResultTracker()
 
+        # Exponential backoff state for MongoDB persist failures.
+        # When persist fails, the consumer enters a backoff period during
+        # which it continues polling Kafka (maintaining the consumer group)
+        # but skips the persist attempt. The delay increases exponentially
+        # up to retry_max_seconds, with jitter to avoid thundering herd.
+        self._retry_base_seconds = retry_base_seconds
+        self._retry_max_seconds = retry_max_seconds
+        self._retry_jitter_seconds = retry_jitter_seconds
+        self._consecutive_failures = 0
+        self._backoff_until = 0.0
+
     def _default_sink(self, result: WindowResult) -> dict[str, bool]:
         logger.info(
             "Window produced %d bunching action(s), %d new deviation result(s)",
             len(result.bunching_actions), len(result.new_deviations),
         )
         return {"success": True}
+
+    def _in_backoff(self) -> bool:
+        return time.time() < self._backoff_until
+
+    def _enter_backoff(self) -> None:
+        delay = min(
+            self._retry_max_seconds,
+            self._retry_base_seconds * (2 ** self._consecutive_failures),
+        )
+        delay += random.uniform(0, self._retry_jitter_seconds)
+        self._backoff_until = time.time() + delay
+        self._consecutive_failures += 1
+        logger.warning(
+            "MongoDB persist failed (attempt %d). Backing off for %.1fs before retry.",
+            self._consecutive_failures, delay,
+        )
+
+    def _reset_backoff(self) -> None:
+        if self._consecutive_failures > 0:
+            logger.info(
+                "MongoDB persist recovered after %d failure(s). Resetting backoff.",
+                self._consecutive_failures,
+            )
+        self._consecutive_failures = 0
+        self._backoff_until = 0.0
 
     def _maybe_refresh_gtfs_static(self) -> None:
         now = time.time()
@@ -426,13 +466,20 @@ class AnalyticsConsumer:
 
                 if time.time() - last_window_flush >= self.window_seconds:
                     window_pings = self.buffer.flush()
+
+                    if self._in_backoff():
+                        logger.debug("In backoff, skipping persist attempt.")
+                        last_window_flush = time.time()
+                        continue
+
                     persist_result = self._process_window(window_pings)
 
                     if persist_result is not None:
                         if persist_result.get("success"):
                             self.consumer.commit(asynchronous=False)
+                            self._reset_backoff()
                         else:
-                            logger.warning("Failed while trying to store in Mongo. Retrying")
+                            self._enter_backoff()
 
                     last_window_flush = time.time()
 
