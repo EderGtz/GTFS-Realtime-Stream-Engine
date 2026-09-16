@@ -27,7 +27,7 @@ export const config = {
     },
     mongo: {
         uri: envOrThrow("MONGO_URI"),
-        database: "gtfs_realtime",
+        database: envOrDefault("MONGO_DATABASE", "gtfs_realtime"),
     },
     api: {
         port: parseInt(envOrDefault("API_PORT", "3000"), 10),

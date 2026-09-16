@@ -3,9 +3,17 @@ import helmet from 'helmet';
 import cors from 'cors';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { createDelaysRouter } from './routes/delays.js';
 import { logger } from '../utils/logger.js';
+import type { ApiCollections } from '../db/connection.js';
 
-export function createApp(): express.Express {
+/**
+ * Create the Express application.
+ * `collections` is optional so the app can be built without MongoDB
+ * (e.g. health-check-only tests). When absent, the /v1 routes are
+ * not mounted.
+ */
+export function createApp(collections?: ApiCollections): express.Express {
     const app = express();
 
     app.use(helmet());
@@ -21,11 +29,12 @@ export function createApp(): express.Express {
         res.json({ status: 'ok' });
     });
 
-    // Routes will be mounted here in step 4
-    // app.use('/v1', delaysRouter);
+    // Delays route — only when MongoDB collections are available
+    if (collections) {
+        app.use('/v1', createDelaysRouter(collections));
+    }
 
     app.use(errorHandler);
 
     return app;
 }
- 

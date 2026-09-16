@@ -46,6 +46,7 @@ export async function connectDbWithRetry(
 }
 
 export interface ApiCollections {
+    client: MongoClient;
     bunching: Collection<Document>;
     deviations: Collection<Document>;
 }
@@ -53,12 +54,14 @@ export interface ApiCollections {
 /**
  * Open a read-only connection to the analytics database and return
  * the two collections the /v1/delays/live endpoint needs.
+ * The client is included so the caller can close it on shutdown.
  */
 export async function openApiCollections(): Promise<ApiCollections> {
     const client = await connectDbWithRetry(config.mongo.uri);
     const db = client.db(config.mongo.database);
 
     return {
+        client,
         bunching: db.collection(BUNCHING_COLLECTION),
         deviations: db.collection(DEVIATION_COLLECTION),
     };
