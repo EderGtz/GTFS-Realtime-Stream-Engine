@@ -166,41 +166,38 @@ class TestAnalyticsConsumer:
     @patch("consumer.GtfsStaticData")
     @patch("consumer.find_close_pairs")
     @patch("consumer.compute_arrival_deviations")
-    @patch("consumer.compute_departure_deviations")
-    def test_process_window_error_handling(self, mock_dep, mock_arr, mock_pairs, MockGtfs):
+    def test_process_window_error_handling(self, mock_arr, mock_pairs, MockGtfs):
         """
         If bunching crashes, the consumer should catch it, log it, and still compute
         deviations independently. One metric's failure must not silently take the
         other down with it, since they're wrapped in separate try/except blocks.
         """
         sink = MagicMock()
-        
+
         consumer = AnalyticsConsumer(
-            kafka_config={"group.id": "test"}, 
-            topic="test", 
+            kafka_config={"group.id": "test"},
+            topic="test",
             on_window_result=sink
         )
-        
+
         # Force bunching to crash
         mock_pairs.side_effect = Exception("Bunching Engine Failure")
         mock_arr.return_value = []
-        mock_dep.return_value = []
-        
+
         df = pd.DataFrame([
             {
-                "stop_id": "1", 
-                "timestamp_eastern": ets("2026-08-18 10:00:00"), 
+                "stop_id": "1",
+                "timestamp_eastern": ets("2026-08-18 10:00:00"),
                 "current_status": "STOPPED_AT"
             }
         ])
-        
+
         consumer._process_window(df)
-        
+
         assert sink.call_count == 1
         # Proves the deviation path was actually reached and succeeded on its own,
         # not just that new_deviations happens to be [] for some other, unverified reason.
         mock_arr.assert_called_once()
-        mock_dep.assert_called_once()
         
         # Inspect what was sent to the sink
         result: WindowResult = sink.call_args[0][0]

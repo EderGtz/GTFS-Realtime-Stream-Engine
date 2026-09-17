@@ -439,9 +439,25 @@ class AnalyticsConsumer:
 
         try:
             arrival_results = compute_arrival_deviations(scoped, self.static_data.stop_times_lookup)
-            departure_results = compute_departure_deviations(scoped, self.static_data.stop_times_lookup)
+
+            # Departure deviations disabled — compute_departure_deviations() uses
+            # "last STOPPED_AT ping before transitioning away" as a proxy for the
+            # actual departure moment, but this technique was never validated
+            # against real data in the exploration notebooks (unlike arrival
+            # collapsing, which was), and produce a lot of untrusty documents.  
+            # Re-enabling would require:
+            #   1. Validate the last-STOPPED_AT heuristic against ground truth
+            #      (same empirical check notebook 03, Section E did for arrivals).
+            #   2. Add a MAX_DEVIATION filter to reject ghost-shift outliers
+            #      at day boundaries (|deviation_seconds| > 30 min).
+            #   3. Re-add departure_results to the list below.
+            # This also halves the document count per stop (one doc instead of
+            # two), which was the user-facing trigger for this change.
+            #
+            # departure_results = compute_departure_deviations(scoped, self.static_data.stop_times_lookup)
+
             new_deviations = self.deviation_tracker.filter_new(
-                arrival_results + departure_results,
+                arrival_results,
                 reference_time,
             )
             new_deviations = self._enrich_with_location(new_deviations)
