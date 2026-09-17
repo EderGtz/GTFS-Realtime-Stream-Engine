@@ -232,11 +232,9 @@ class TestAnalyticsConsumer:
     @patch("consumer.GtfsStaticData")
     @patch("consumer.find_close_pairs")
     @patch("consumer.compute_arrival_deviations")
-    @patch("consumer.compute_departure_deviations")
-    def test_bunching_gets_full_pings_deviation_gets_scoped(self, mock_dep, mock_arr, mock_pairs, MockGtfs):
+    def test_bunching_gets_full_pings_deviation_gets_scoped(self, mock_arr, mock_pairs, MockGtfs):
         sink = MagicMock()
         consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
-        mock_arr.return_value, mock_dep.return_value = [], []
 
         df = pd.DataFrame([
             {"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00"), "current_status": "STOPPED_AT"},
@@ -258,9 +256,8 @@ class TestAnalyticsConsumer:
     @patch("consumer.find_close_pairs")
     @patch("consumer.detect_bunching_events")
     @patch("consumer.compute_arrival_deviations")
-    @patch("consumer.compute_departure_deviations")
     def test_process_window_happy_path_passes_results_through(
-        self, mock_dep, mock_arr, mock_detect, mock_pairs, MockGtfs
+        self, mock_arr, mock_detect, mock_pairs, MockGtfs
     ):
         sink = MagicMock()
         consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
@@ -271,7 +268,6 @@ class TestAnalyticsConsumer:
         mock_pairs.return_value = pd.DataFrame()
         mock_detect.return_value = [fake_event]
         mock_arr.return_value = []
-        mock_dep.return_value = []
 
         df = pd.DataFrame([{"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00"), "current_status": "STOPPED_AT"}])
         consumer._process_window(df)
@@ -460,10 +456,9 @@ class TestCommitGating:
     @patch("consumer.find_close_pairs")
     @patch("consumer.detect_bunching_events")
     @patch("consumer.compute_arrival_deviations")
-    @patch("consumer.compute_departure_deviations")
     @patch("consumer.Consumer")
     def test_commits_when_persist_succeeds(
-        self, MockKafka, mock_dep, mock_arr, mock_detect, mock_pairs, MockGtfs
+        self, MockKafka, mock_arr, mock_detect, mock_pairs, MockGtfs
     ):
         mock_kafka = MockKafka.return_value
         mock_kafka.poll.side_effect = [
@@ -473,7 +468,6 @@ class TestCommitGating:
         mock_pairs.return_value = pd.DataFrame()
         mock_detect.return_value = []
         mock_arr.return_value = []
-        mock_dep.return_value = []
 
         sink = MagicMock(return_value={
             "success": True, "bunching_written": 0, "deviations_written": 0,
@@ -494,10 +488,9 @@ class TestCommitGating:
     @patch("consumer.find_close_pairs")
     @patch("consumer.detect_bunching_events")
     @patch("consumer.compute_arrival_deviations")
-    @patch("consumer.compute_departure_deviations")
     @patch("consumer.Consumer")
     def test_skips_commit_when_persist_fails(
-        self, MockKafka, mock_dep, mock_arr, mock_detect, mock_pairs, MockGtfs
+        self, MockKafka, mock_arr, mock_detect, mock_pairs, MockGtfs
     ):
         mock_kafka = MockKafka.return_value
         mock_kafka.poll.side_effect = [
@@ -507,7 +500,6 @@ class TestCommitGating:
         mock_pairs.return_value = pd.DataFrame()
         mock_detect.return_value = []
         mock_arr.return_value = []
-        mock_dep.return_value = []
 
         sink = MagicMock(return_value={
             "success": False, "bunching_written": 0, "deviations_written": 0,
@@ -552,10 +544,9 @@ class TestCommitGating:
     @patch("consumer.find_close_pairs")
     @patch("consumer.detect_bunching_events")
     @patch("consumer.compute_arrival_deviations")
-    @patch("consumer.compute_departure_deviations")
     @patch("consumer.Consumer")
     def test_commit_not_called_on_second_window_after_first_success(
-        self, MockKafka, mock_dep, mock_arr, mock_detect, mock_pairs, MockGtfs
+        self, MockKafka, mock_arr, mock_detect, mock_pairs, MockGtfs
     ):
         """Two windows: first succeeds (commit), second fails (no commit).
         Verifies the gating decision is per-window, not sticky."""
@@ -578,7 +569,6 @@ class TestCommitGating:
         mock_pairs.return_value = pd.DataFrame()
         mock_detect.return_value = []
         mock_arr.return_value = []
-        mock_dep.return_value = []
 
         sink = MagicMock(side_effect=[
             {"success": True, "bunching_written": 0, "deviations_written": 0},
@@ -719,10 +709,9 @@ class TestPersistBackoff:
     @patch("consumer.find_close_pairs")
     @patch("consumer.detect_bunching_events")
     @patch("consumer.compute_arrival_deviations")
-    @patch("consumer.compute_departure_deviations")
     @patch("consumer.Consumer")
     def test_run_skips_persist_during_backoff(
-        self, MockKafka, mock_dep, mock_arr, mock_detect, mock_pairs, MockGtfs
+        self, MockKafka, mock_arr, mock_detect, mock_pairs, MockGtfs
     ):
         """When in backoff, the consumer should skip _process_window entirely
         and NOT call commit."""
@@ -735,7 +724,6 @@ class TestPersistBackoff:
         mock_pairs.return_value = pd.DataFrame()
         mock_detect.return_value = []
         mock_arr.return_value = []
-        mock_dep.return_value = []
 
         sink = MagicMock(return_value={
             "success": False, "bunching_written": 0, "deviations_written": 0,
@@ -761,10 +749,9 @@ class TestPersistBackoff:
     @patch("consumer.find_close_pairs")
     @patch("consumer.detect_bunching_events")
     @patch("consumer.compute_arrival_deviations")
-    @patch("consumer.compute_departure_deviations")
     @patch("consumer.Consumer")
     def test_run_resets_backoff_on_recovery(
-        self, MockKafka, mock_dep, mock_arr, mock_detect, mock_pairs, MockGtfs
+        self, MockKafka, mock_arr, mock_detect, mock_pairs, MockGtfs
     ):
         """After a failure followed by success, backoff should reset."""
         mock_kafka = MockKafka.return_value
@@ -780,7 +767,6 @@ class TestPersistBackoff:
         mock_pairs.return_value = pd.DataFrame()
         mock_detect.return_value = []
         mock_arr.return_value = []
-        mock_dep.return_value = []
 
         sink = MagicMock(side_effect=[fail_result, ok_result])
         consumer = AnalyticsConsumer(

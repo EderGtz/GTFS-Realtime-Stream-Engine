@@ -318,6 +318,7 @@ class TestMongoDBPersistence:
         window_result = WindowResult(
             bunching_actions=[("new", event)],
             new_deviations=[dev],
+            total_records=2,
         )
 
         result = writer.persist_window(window_result)
