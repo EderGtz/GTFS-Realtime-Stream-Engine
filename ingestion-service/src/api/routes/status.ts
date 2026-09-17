@@ -7,10 +7,10 @@ import { logger } from '../../utils/logger.js';
  * Router factory — receives the MongoDB collections via dependency injection
  * so the route handler stays testable (mock collections, not the whole app).
  */
-export function createDelaysRouter(collections: ApiCollections): Router {
+export function createStatusRouter(collections: ApiCollections): Router {
     const router = Router();
 
-    router.get('/delays/live', async (_req, res, next) => {
+    router.get('/status/live', async (_req, res, next) => {
         const start = Date.now();
         try {
             const [deviationDocs, bunchingDocs] = await Promise.all([
@@ -57,7 +57,7 @@ export function createDelaysRouter(collections: ApiCollections): Router {
 
             logger.info(
                 { delay_count: delays.length, bunching_count: bunching.length, duration_ms: Date.now() - start },
-                'GET /v1/delays/live served',
+                'GET /v1/status/live served',
             );
             res.json(response);
         } catch (err) {
