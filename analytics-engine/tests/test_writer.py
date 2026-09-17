@@ -289,22 +289,20 @@ class TestPersistWindow:
         assert result["deviations_written"] == 1
 
     @patch("db.writer._connect_with_retry")
-    def test_persist_window_returns_failure_on_partial_write(self, mock_connect):
-        """If MongoDB accepts some but not all operations, success is False."""
+    def test_persist_window_returns_failure_on_bulk_write_error(self, mock_connect):
+        """If bulk_write throws a PyMongoError, success is False."""
+        mock_bunching_col = MagicMock()
+        mock_deviation_col = MagicMock()
+        mock_collections = {"bunching_events": mock_bunching_col, "schedule_deviations": mock_deviation_col}
+        mock_db = MagicMock()
+        mock_db.__getitem__ = lambda self, key: mock_collections[key]
         mock_client = MagicMock()
+        mock_client.__getitem__ = lambda self, key: mock_db
         mock_connect.return_value = mock_client
 
-        # Bunching: asked to write 2, only wrote 1
-        mock_bunching_result = MagicMock()
-        mock_bunching_result.upserted_count = 1
-        mock_bunching_result.modified_count = 0
-        # Deviation: all good
-        mock_deviation_result = MagicMock()
-        mock_deviation_result.upserted_count = 1
-        mock_deviation_result.modified_count = 0
-
-        mock_client["gtfs_realtime"]["bunching_events"].bulk_write.return_value = mock_bunching_result
-        mock_client["gtfs_realtime"]["schedule_deviations"].bulk_write.return_value = mock_deviation_result
+        # Bunching succeeds, deviation throws
+        mock_bunching_col.bulk_write.return_value = MagicMock()
+        mock_deviation_col.bulk_write.side_effect = PyMongoError("DB Down")
 
         writer = MetricsWriter(mongo_uri="mongodb://fake")
 
@@ -326,8 +324,8 @@ class TestPersistWindow:
         result = writer.persist_window(window_result)
 
         assert result["success"] is False
-        assert result["bunching_written"] == 1  # only 1 of 2 succeeded
-        assert result["deviations_written"] == 1
+        assert result["bunching_written"] == 2  # bunching succeeded
+        assert result["deviations_written"] == 0  # deviation threw PyMongoError
 
     @patch("db.writer._connect_with_retry")
     def test_persist_window_returns_success_for_empty_window(self, mock_connect):

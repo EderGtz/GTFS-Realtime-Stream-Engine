@@ -228,8 +228,11 @@ class MetricsWriter:
         operations = build_bunching_operations(actions)
 
         try:
-            result = self.bunching_collection.bulk_write(operations, ordered=False)
-            return result.upserted_count + result.modified_count
+            self.bunching_collection.bulk_write(operations, ordered=False)
+            # bulk_write throws PyMongoError on genuine failures.
+            # A matched-but-not-modified upsert (overlap window reprocessing
+            # the same event) is still a success — not a partial write.
+            return len(operations)
 
         except PyMongoError:
             logger.exception("Failed to write %d bunching action(s) to MongoDB.", len(actions))
@@ -240,8 +243,8 @@ class MetricsWriter:
             return 0
         operations = build_deviation_operations(results)
         try:
-            result = self.deviation_collection.bulk_write(operations, ordered=False)
-            return result.upserted_count + result.modified_count
+            self.deviation_collection.bulk_write(operations, ordered=False)
+            return len(operations)
         except PyMongoError:
             logger.exception("Failed to write %d deviation result(s) to MongoDB.", len(results))
             return 0
