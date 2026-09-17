@@ -39,7 +39,7 @@ jobs:
         working-directory: ./ingestion-service
         run: npm run generate:types
 
-      - name: Run Kafka Integration Test
+      - name: Run Integration Tests (Kafka + API)
         working-directory: ./ingestion-service
         run: npx vitest run tests/integration/
 
