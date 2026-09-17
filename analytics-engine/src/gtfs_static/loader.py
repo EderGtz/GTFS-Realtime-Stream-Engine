@@ -35,7 +35,7 @@ _REQUIRED_FILES = ("stops.txt", "trips.txt", "stop_times.txt")
 _OPTIONAL_VERSION_FILE = "feed_info.txt"
 
 # analytics-engine/src/gtfs_static/loader.py. parents[2] == analytics-engine/
-_DEFAULT_GTFS_DIR = Path(__file__).resolve().parents[2] / "gtfs_static" / "MBTA_GTFS"
+_DEFAULT_GTFS_DIR = Path(__file__).resolve().parents[2] / "data" / "MBTA_GTFS"
 
 _REQUIRED_COLUMNS = {
     "trips.txt": {"trip_id", "direction_id"},

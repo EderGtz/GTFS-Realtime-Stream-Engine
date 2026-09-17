@@ -354,13 +354,13 @@ class TestEndToEndPipeline:
                 "vehicle_id": "E2E-A", "trip_id": "E2E-T1", "route_id": "E2E-R1",
                 "lat": 42.00000, "lon": -71.00000, "stop_id": "E2E-S1",
                 "current_stop_sequence": 1, "current_status": "STOPPED_AT",
-                "timestamp_eastern": "2026-09-14 10:00:00",
+                "timestamp": "2026-09-14 10:00:00",
             },
             {
                 "vehicle_id": "E2E-B", "trip_id": "E2E-T2", "route_id": "E2E-R1",
                 "lat": 42.00001, "lon": -71.00000, "stop_id": "E2E-S1",
                 "current_stop_sequence": 1, "current_status": "STOPPED_AT",
-                "timestamp_eastern": "2026-09-14 10:00:00",
+                "timestamp": "2026-09-14 10:00:00",
             },
         ]
         for ping in pings:
@@ -431,8 +431,8 @@ class TestEndToEndPipeline:
             consumer.buffer.add(ping)
 
         pings_df = consumer.buffer.flush()
-        # buffer.flush() already converts timestamp_eastern via to_eastern(),
-        # so no manual conversion is needed here.
+        # buffer.flush() creates timestamp_eastern from the `timestamp` field
+        # via to_eastern(), so no manual conversion is needed here.
 
         result = consumer._process_window(pings_df)
 

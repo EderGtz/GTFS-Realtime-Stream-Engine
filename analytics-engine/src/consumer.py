@@ -135,7 +135,9 @@ class PingWindowBuffer:
             return pd.DataFrame()
 
         df = pd.DataFrame(self._rows)
-        df["timestamp_eastern"] = df["timestamp_eastern"].apply(to_eastern)
+        # The ingestion service publishes `timestamp` in UTC.  The metrics
+        # modules need an Eastern-timezone column, so we create it here.
+        df["timestamp_eastern"] = df["timestamp"].apply(to_eastern)
 
         cutoff = df["timestamp_eastern"].max() - pd.Timedelta(seconds=self.overlap_seconds)
         carry_forward = df[df["timestamp_eastern"] >= cutoff]

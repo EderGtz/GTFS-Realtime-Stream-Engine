@@ -150,7 +150,7 @@ class TestPingWindowBuffer:
             ping_time = base_time + pd.Timedelta(seconds=15 * i)
             buffer.add({
                 "vehicle_id": "v1",
-                "timestamp_eastern": ping_time.strftime("%Y-%m-%d %H:%M:%S%z")
+                "timestamp": ping_time.strftime("%Y-%m-%d %H:%M:%S%z")
             })
             
         df = buffer.flush()
@@ -450,7 +450,7 @@ class TestCommitGating:
         "vehicle_id": "v1", "trip_id": "t1", "route_id": "R1",
         "lat": 42.0, "lon": -71.0, "stop_id": "s1",
         "current_stop_sequence": 1, "current_status": "STOPPED_AT",
-        "timestamp_eastern": "2026-08-18 10:00:00",
+        "timestamp": "2026-08-18 10:00:00",
     }).encode()
 
     def _make_kafka_message(self, payload=VALID_PING):
@@ -570,7 +570,7 @@ class TestCommitGating:
                 "vehicle_id": "v2", "trip_id": "t2", "route_id": "R1",
                 "lat": 42.0, "lon": -71.0, "stop_id": "s1",
                 "current_stop_sequence": 2, "current_status": "IN_TRANSIT_TO",
-                "timestamp_eastern": "2026-08-18 10:01:00",
+                "timestamp": "2026-08-18 10:01:00",
             }).encode()
         )
         # Window 1: message -> success -> commit
@@ -628,7 +628,7 @@ class TestPersistBackoff:
         "vehicle_id": "v1", "trip_id": "t1", "route_id": "R1",
         "lat": 42.0, "lon": -71.0, "stop_id": "s1",
         "current_stop_sequence": 1, "current_status": "STOPPED_AT",
-        "timestamp_eastern": "2026-08-18 10:00:00",
+        "timestamp": "2026-08-18 10:00:00",
     }).encode()
 
     def _make_kafka_message(self):
