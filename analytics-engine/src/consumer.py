@@ -93,7 +93,6 @@ from metrics.bunching import (
 from metrics.schedule_deviation import (
     DeviationResult,
     compute_arrival_deviations,
-    compute_departure_deviations,
     to_eastern,
 )
 from utils.logger import get_logger
@@ -264,6 +263,7 @@ class _DeviationResultTracker:
 class WindowResult:
     bunching_actions: list[tuple[str, BunchingEvent]]
     new_deviations: list[DeviationResult]
+    total_records: int
 
 
 class AnalyticsConsumer:
@@ -409,6 +409,7 @@ class AnalyticsConsumer:
         
         if pings.empty:
             return None
+        total_records = len(pings)
         reference_time = pings["timestamp_eastern"].max()
 
         # Extract flat lat/lon from the GeoJSON `location` field the ingestion
@@ -468,7 +469,8 @@ class AnalyticsConsumer:
         return self.on_window_result(
             WindowResult(
                 bunching_actions=bunching_actions, 
-                new_deviations=new_deviations
+                new_deviations=new_deviations,
+                total_records=total_records,
                 )
             )
 

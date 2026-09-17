@@ -65,7 +65,8 @@ def main() -> None:
     def on_window_result(result: WindowResult) -> PersistWindowResult:
         persist_window_result = writer.persist_window(result)
         logger.info(
-            "Window persisted: %d bunching action(s), %d deviation result(s).",
+            "Window persisted: %d record(s) examined, %d bunching action(s), %d deviation result(s).",
+            result.total_records,
             persist_window_result["bunching_written"],
             persist_window_result["deviations_written"]
         )
