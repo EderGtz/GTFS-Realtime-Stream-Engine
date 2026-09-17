@@ -110,6 +110,14 @@ TRACKER_RETENTION_SECONDS = WINDOW_SECONDS * 10
 
 GTFS_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60  # matches the "recurring interval" spec
 
+# Reject deviations beyond this threshold — they indicate ghost shifts,
+# schedule-matching bugs at day boundaries, or vehicles running on a
+# completely different trip than what GTFS reports.  30 minutes was chosen
+# by inspecting the real deviation distribution: 99.6% of legitimate
+# deviations fall within ±15 min; the outliers (30-43 min) were all traced
+# to single vehicles on misaligned schedules.
+MAX_DEVIATION_SECONDS = 30 * 60  # 30 minutes
+
 
 class PingWindowBuffer:
     """
@@ -445,8 +453,7 @@ class AnalyticsConsumer:
             # "last STOPPED_AT ping before transitioning away" as a proxy for the
             # actual departure moment, but this technique was never validated
             # against real data in the exploration notebooks (unlike arrival
-            # collapsing, which was), and produce a lot of untrusty documents.  
-            # Re-enabling would require:
+            # collapsing, which was).  Re-enabling requires:
             #   1. Validate the last-STOPPED_AT heuristic against ground truth
             #      (same empirical check notebook 03, Section E did for arrivals).
             #   2. Add a MAX_DEVIATION filter to reject ghost-shift outliers
@@ -456,6 +463,20 @@ class AnalyticsConsumer:
             # two), which was the user-facing trigger for this change.
             #
             # departure_results = compute_departure_deviations(scoped, self.static_data.stop_times_lookup)
+
+            # Filter out ghost-shift outliers — deviations beyond ±30 min
+            # indicate schedule-matching bugs, not real lateness.
+            before_filter = len(arrival_results)
+            arrival_results = [
+                r for r in arrival_results
+                if abs(r.deviation_seconds) <= MAX_DEVIATION_SECONDS
+            ]
+            dropped = before_filter - len(arrival_results)
+            if dropped:
+                logger.info(
+                    "Dropped %d deviation(s) exceeding ±%d min threshold.",
+                    dropped, MAX_DEVIATION_SECONDS // 60,
+                )
 
             new_deviations = self.deviation_tracker.filter_new(
                 arrival_results,

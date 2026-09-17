@@ -232,6 +232,39 @@ class TestAnalyticsConsumer:
     @patch("consumer.GtfsStaticData")
     @patch("consumer.find_close_pairs")
     @patch("consumer.compute_arrival_deviations")
+    def test_process_window_drops_deviations_exceeding_threshold(self, mock_arr, mock_pairs, MockGtfs):
+        """Deviations beyond ±MAX_DEVIATION_SECONDS should be filtered out."""
+        from metrics.schedule_deviation import DeviationResult
+
+        sink = MagicMock()
+        consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
+        mock_pairs.return_value = pd.DataFrame()
+
+        # One within threshold (5 min late), one beyond (45 min late)
+        mock_arr.return_value = [
+            DeviationResult(
+                vehicle_id="v1", trip_id="t1", stop_sequence=1, kind="arrival",
+                scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+                deviation_seconds=300,
+            ),
+            DeviationResult(
+                vehicle_id="v2", trip_id="t2", stop_sequence=1, kind="arrival",
+                scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:45:00"),
+                deviation_seconds=2700,
+            ),
+        ]
+
+        df = pd.DataFrame([{"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00"), "current_status": "STOPPED_AT"}])
+        consumer._process_window(df)
+
+        result: WindowResult = sink.call_args[0][0]
+        # Only the 5-min deviation should survive; the 45-min one is dropped
+        assert len(result.new_deviations) == 1
+        assert result.new_deviations[0].vehicle_id == "v1"
+
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.find_close_pairs")
+    @patch("consumer.compute_arrival_deviations")
     def test_bunching_gets_full_pings_deviation_gets_scoped(self, mock_arr, mock_pairs, MockGtfs):
         sink = MagicMock()
         consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
