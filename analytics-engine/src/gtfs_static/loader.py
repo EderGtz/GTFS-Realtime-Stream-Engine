@@ -95,11 +95,11 @@ class GtfsStaticData:
 
         trips_df = pd.read_csv(
             self.gtfs_dir / "trips.txt", 
-            dtype={"trip_id": str, "route_id": str},
+            dtype={"trip_id": str, "route_id": str, "trip_short_name": str},
         )
         stop_times_df = pd.read_csv(
             self.gtfs_dir / "stop_times.txt", 
-            dtype={"trip_id": str, "stop_id": str},
+            dtype={"trip_id": str, "stop_id": str, "stop_headsign": str},
         )
         stops_df = pd.read_csv(
             self.gtfs_dir / "stops.txt", 
