@@ -399,6 +399,18 @@ class AnalyticsConsumer:
         if pings.empty:
             return None
         reference_time = pings["timestamp_eastern"].max()
+
+        # Extract flat lat/lon from the GeoJSON `location` field the ingestion
+        # service publishes.  GeoJSON coordinates are [longitude, latitude].
+        if "location" in pings.columns:
+            pings = pings.copy()
+            pings["lat"] = pings["location"].apply(
+                lambda loc: loc["coordinates"][1] if isinstance(loc, dict) and "coordinates" in loc else None
+            )
+            pings["lon"] = pings["location"].apply(
+                lambda loc: loc["coordinates"][0] if isinstance(loc, dict) and "coordinates" in loc else None
+            )
+
         scoped = pings[pings["stop_id"].notna()].copy()  # notebook 02, Section C
 
         try:
