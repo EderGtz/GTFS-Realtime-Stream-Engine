@@ -82,6 +82,7 @@ from confluent_kafka import Consumer, KafkaException
 
 from db.writer import PersistWindowResult
 from gtfs_static.loader import GtfsStaticData
+from gtfs_static.refresh import download_and_extract_gtfs
 from metrics.bunching import (
     MIN_CONSECUTIVE_OBSERVATIONS,
     POLL_INTERVAL_SECONDS,
@@ -294,6 +295,7 @@ class AnalyticsConsumer:
         self.on_window_result = on_window_result or self._default_sink
 
         self.static_data = GtfsStaticData(gtfs_dir) if gtfs_dir else GtfsStaticData()
+        self._gtfs_dir = gtfs_dir  # stored for refresh.download_and_extract_gtfs
         self.static_data.load()
         self._gtfs_refresh_interval = gtfs_refresh_interval_seconds
         self._last_gtfs_refresh_check = time.time()
@@ -352,6 +354,15 @@ class AnalyticsConsumer:
         self._last_gtfs_refresh_check = now
 
         try:
+            # Step 1: fetch the latest ZIP from MBTA if the remote changed.
+            download_kwargs: dict = {}
+            if self._gtfs_dir is not None:
+                download_kwargs["target_dir"] = self._gtfs_dir
+            print("refres.py called")
+            download_and_extract_gtfs(**download_kwargs)
+
+            # Step 2: reload lookups if the on-disk files actually changed
+            # (either from the download above, or a manual replacement).
             reloaded = self.static_data.reload_if_changed()
             if reloaded:
                 logger.info("GTFS-static bundle changed, reloaded lookups.")

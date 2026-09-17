@@ -39,6 +39,7 @@ import sys
 from config import AppConfig
 from consumer import AnalyticsConsumer, WindowResult
 from db.writer import MetricsWriter, PersistWindowResult
+from consumer import download_and_extract_gtfs
 from utils.logger import get_logger
 
 logger = get_logger("analytics-engine.main")
@@ -56,6 +57,9 @@ def main() -> None:
     except RuntimeError as e:
         logger.critical(e)
         sys.exit()
+
+    logger.info("Checking for GTFS-static updates on startup...")
+    download_and_extract_gtfs()
 
     writer = MetricsWriter(mongo_uri=config.mongo_uri)
 
