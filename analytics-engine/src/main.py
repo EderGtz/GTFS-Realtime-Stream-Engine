@@ -37,9 +37,8 @@ import signal
 import sys
 
 from config import AppConfig
-from consumer import AnalyticsConsumer, WindowResult
+from consumer import AnalyticsConsumer, WindowResult, download_and_extract_gtfs
 from db.writer import MetricsWriter, PersistWindowResult
-from consumer import download_and_extract_gtfs
 from utils.logger import get_logger
 
 logger = get_logger("analytics-engine.main")

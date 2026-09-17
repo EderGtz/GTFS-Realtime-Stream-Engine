@@ -56,8 +56,7 @@ def download_and_extract_gtfs(
         with requests.get(MBTA_GTFS_URL, stream=True, timeout=60) as r:
             r.raise_for_status()
             with open(zip_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                f.writelines(r.iter_content(chunk_size=8192))
 
         logger.info("Download complete. Extracting...")
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
