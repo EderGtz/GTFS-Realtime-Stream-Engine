@@ -4,6 +4,18 @@ import type { DelayEntry, BunchingEntry, LiveResponse } from '../types.js';
 import { logger } from '../../utils/logger.js';
 
 /**
+ * How far back to look for "live" data.  Set to 3× the analytics engine's
+ * processing interval (WINDOW_SECONDS = 60s) to cover:
+ *   - the current window buffer (~60s)
+ *   - one overlap cycle (~60s)
+ *   - API polling jitter + processing lag (~60s)
+ *
+ * Data older than this is considered stale — the vehicle has moved on,
+ * the bunching pair has separated, etc.
+ */
+const LIVE_WINDOW_MS = 3 * 60 * 1000; // 3 minutes
+
+/**
  * Router factory — receives the MongoDB collections via dependency injection
  * so the route handler stays testable (mock collections, not the whole app).
  */
@@ -13,12 +25,14 @@ export function createStatusRouter(collections: ApiCollections): Router {
     router.get('/status/live', async (_req, res, next) => {
         const start = Date.now();
         try {
+            const cutoff = new Date(Date.now() - LIVE_WINDOW_MS);
+
             const [deviationDocs, bunchingDocs] = await Promise.all([
                 collections.deviations
-                    .find({}, { projection: { _id: 0 } })
+                    .find({ actual_at: { $gte: cutoff } }, { projection: { _id: 0 } })
                     .toArray(),
                 collections.bunching
-                    .find({}, { projection: { _id: 0 } })
+                    .find({ end_time: { $gte: cutoff } }, { projection: { _id: 0 } })
                     .toArray(),
             ]);
 
