@@ -19,6 +19,11 @@ const describeIfDocker = dockerSock ? describe : describe.skip;
 const BUNCHING = 'bunching_events';
 const DEVIATIONS = 'schedule_deviations';
 
+// Use recent timestamps so the live-window filter doesn't discard them.
+function recentDate(secondsAgo: number): Date {
+    return new Date(Date.now() - secondsAgo * 1000);
+}
+
 const seededDeviations = [
     {
         vehicle_id: 'int-v1',
@@ -26,8 +31,8 @@ const seededDeviations = [
         stop_sequence: 5,
         kind: 'arrival',
         deviation_seconds: 120,
-        scheduled_at: new Date('2026-09-14T19:00:00Z'),
-        actual_at: new Date('2026-09-14T19:02:00Z'),
+        scheduled_at: recentDate(90),
+        actual_at: recentDate(30),
         location: { type: 'Point', coordinates: [-71.05, 42.36] },
     },
     {
@@ -36,8 +41,8 @@ const seededDeviations = [
         stop_sequence: 1,
         kind: 'departure',
         deviation_seconds: -30,
-        scheduled_at: new Date('2026-09-14T20:00:00Z'),
-        actual_at: new Date('2026-09-14T19:59:30Z'),
+        scheduled_at: recentDate(120),
+        actual_at: recentDate(60),
         // no location — should come back as null
     },
 ];
@@ -48,8 +53,8 @@ const seededBunching = [
         direction_id: 0,
         vehicle_a: 'int-v1',
         vehicle_b: 'int-v2',
-        start_time: new Date('2026-09-14T19:30:00Z'),
-        end_time: new Date('2026-09-14T19:45:00Z'),
+        start_time: recentDate(180),
+        end_time: recentDate(30),
         observation_count: 8,
         min_distance_meters: 22.3,
     },

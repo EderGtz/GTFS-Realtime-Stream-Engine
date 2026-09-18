@@ -12,10 +12,26 @@ import { createApp } from '../../src/api/server.js';
 
 // --- Helpers -----------------------------------------------------------
 
+/**
+ * Mock MongoDB collection that applies $gte filters from the query.
+ * This lets us test the time-window filtering behavior without a real DB.
+ */
 function mockCollection(docs: Record<string, unknown>[]) {
     return {
-        find: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue(docs),
+        find: vi.fn().mockImplementation((filter: Record<string, unknown>) => {
+            let filtered = docs;
+            for (const [field, condition] of Object.entries(filter)) {
+                if (condition && typeof condition === 'object' && '$gte' in condition) {
+                    const cutoff = (condition as Record<string, unknown>)['$gte'] as Date;
+                    filtered = filtered.filter((doc) => {
+                        const val = doc[field];
+                        return val instanceof Date && val >= cutoff;
+                    });
+                }
+            }
+            return {
+                toArray: vi.fn().mockResolvedValue(filtered),
+            };
         }),
     };
 }
@@ -34,14 +50,19 @@ function appWithCollections(
 
 // --- Seed data ---------------------------------------------------------
 
+// Use timestamps 30s ago so they're always within the live window filter.
+function recentDate(secondsAgo: number): Date {
+    return new Date(Date.now() - secondsAgo * 1000);
+}
+
 const seededDeviations = [
     {
         vehicle_id: 'y3227',
         trip_id: 'NorthBase-77',
         kind: 'arrival' as const,
         deviation_seconds: 160,
-        scheduled_at: new Date('2026-09-14T19:15:00Z'),
-        actual_at: new Date('2026-09-14T19:17:40Z'),
+        scheduled_at: recentDate(90),
+        actual_at: recentDate(30),
         location: { type: 'Point', coordinates: [-71.1425, 42.3954] },
         route_id: 'Red',
         route_long_name: 'Red Line',
@@ -51,8 +72,8 @@ const seededDeviations = [
         trip_id: 'NorthBase-12',
         kind: 'departure' as const,
         deviation_seconds: -45,
-        scheduled_at: new Date('2026-09-14T20:00:00Z'),
-        actual_at: new Date('2026-09-14T19:59:15Z'),
+        scheduled_at: recentDate(120),
+        actual_at: recentDate(60),
         // no location field — should map to null
         // no route_long_name — should map to null
     },
@@ -64,8 +85,8 @@ const seededBunching = [
         direction_id: 1,
         vehicle_a: 'y3227',
         vehicle_b: 'y3280',
-        start_time: new Date('2026-09-14T20:16:30Z'),
-        end_time: new Date('2026-09-14T20:45:45Z'),
+        start_time: recentDate(180),
+        end_time: recentDate(30),
         observation_count: 13,
         min_distance_meters: 15.5,
     },
@@ -94,11 +115,11 @@ describe('GET /v1/status/live', () => {
         expect(d0.trip_id).toBe('NorthBase-77');
         expect(d0.kind).toBe('arrival');
         expect(d0.deviation_seconds).toBe(160);
-        expect(d0.scheduled_at).toBe('2026-09-14T19:15:00.000Z');
-        expect(d0.actual_at).toBe('2026-09-14T19:17:40.000Z');
+        expect(d0.scheduled_at).toBe(seededDeviations[0]!.scheduled_at.toISOString());
+        expect(d0.actual_at).toBe(seededDeviations[0]!.actual_at.toISOString());
         expect(d0.location).toEqual({ type: 'Point', coordinates: [-71.1425, 42.3954] });
 
-        // route_id / direction_id not in deviation docs → null
+        // route enrichment fields
         expect(d0.route_id).toBe('Red');
         expect(d0.route_long_name).toBe('Red Line');
         expect(d0.direction_id).toBeNull();
@@ -145,6 +166,70 @@ describe('GET /v1/status/live', () => {
 
         expect(res.body.meta.delay_count).toBe(res.body.delays.length);
         expect(res.body.meta.bunching_count).toBe(res.body.bunching.length);
+    });
+
+    test('filters out stale deviations older than live window', async () => {
+        const stale = {
+            vehicle_id: 'stale_v',
+            trip_id: 'old_trip',
+            kind: 'arrival' as const,
+            deviation_seconds: 500,
+            scheduled_at: recentDate(600),   // 10 min ago
+            actual_at: recentDate(600),      // 10 min ago — beyond 3-min window
+        };
+        const fresh = {
+            ...seededDeviations[0],
+            actual_at: recentDate(30),        // 30s ago — within window
+            scheduled_at: recentDate(90),
+        };
+        const app = appWithCollections([stale, fresh], []);
+        const res = await request(app).get('/v1/status/live');
+
+        expect(res.status).toBe(200);
+        expect(res.body.delays).toHaveLength(1);
+        expect(res.body.delays[0].vehicle_id).toBe('y3227');
+    });
+
+    test('filters out stale bunching events older than live window', async () => {
+        const staleBunching = {
+            route_id: '57',
+            direction_id: 1,
+            vehicle_a: 'A',
+            vehicle_b: 'B',
+            start_time: recentDate(600),
+            end_time: recentDate(600),        // 10 min ago — beyond 3-min window
+            observation_count: 3,
+            min_distance_meters: 20.0,
+        };
+        const freshBunching = {
+            ...seededBunching[0],
+            end_time: recentDate(30),         // 30s ago — within window
+        };
+        const app = appWithCollections([], [staleBunching, freshBunching]);
+        const res = await request(app).get('/v1/status/live');
+
+        expect(res.status).toBe(200);
+        expect(res.body.bunching).toHaveLength(1);
+        expect(res.body.bunching[0].vehicle_a).toBe('y3227');
+    });
+
+    test('passes time filter to MongoDB find()', async () => {
+        const coll = mockCollection(seededDeviations);
+        const collections = {
+            client: { close: vi.fn() },
+            deviations: coll,
+            bunching: mockCollection([]),
+        } as unknown as ApiCollections;
+        const app = createApp(collections);
+
+        await request(app).get('/v1/status/live');
+
+        // Verify find() was called with a $gte filter on actual_at
+        expect(coll.find).toHaveBeenCalledOnce();
+        const filter = coll.find.mock.calls[0]![0];
+        expect(filter).toHaveProperty('actual_at');
+        expect(filter.actual_at).toHaveProperty('$gte');
+        expect(filter.actual_at.$gte).toBeInstanceOf(Date);
     });
 
     test('returns 500 with sanitized error when MongoDB query fails', async () => {
