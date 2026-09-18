@@ -43,6 +43,8 @@ const seededDeviations = [
         scheduled_at: new Date('2026-09-14T19:15:00Z'),
         actual_at: new Date('2026-09-14T19:17:40Z'),
         location: { type: 'Point', coordinates: [-71.1425, 42.3954] },
+        route_id: 'Red',
+        route_long_name: 'Red Line',
     },
     {
         vehicle_id: 'y3280',
@@ -52,6 +54,7 @@ const seededDeviations = [
         scheduled_at: new Date('2026-09-14T20:00:00Z'),
         actual_at: new Date('2026-09-14T19:59:15Z'),
         // no location field — should map to null
+        // no route_long_name — should map to null
     },
 ];
 
@@ -96,7 +99,8 @@ describe('GET /v1/status/live', () => {
         expect(d0.location).toEqual({ type: 'Point', coordinates: [-71.1425, 42.3954] });
 
         // route_id / direction_id not in deviation docs → null
-        expect(d0.route_id).toBeNull();
+        expect(d0.route_id).toBe('Red');
+        expect(d0.route_long_name).toBe('Red Line');
         expect(d0.direction_id).toBeNull();
     });
 
@@ -105,6 +109,14 @@ describe('GET /v1/status/live', () => {
         const res = await request(app).get('/v1/status/live');
 
         expect(res.body.delays[1].location).toBeNull();
+    });
+
+    test('route_long_name is null when deviation document has no route_long_name', async () => {
+        const app = appWithCollections(seededDeviations, []);
+        const res = await request(app).get('/v1/status/live');
+
+        // d1 has no route_long_name in seeded data
+        expect(res.body.delays[1].route_long_name).toBeNull();
     });
 
     test('dates are ISO 8601 strings', async () => {

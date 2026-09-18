@@ -15,6 +15,7 @@ export interface DelayEntry {
     vehicle_id: string;
     trip_id: string;
     route_id: string | null;
+    route_long_name: string | null;
     direction_id: number | null;
     kind: 'arrival' | 'departure';
     deviation_seconds: number;

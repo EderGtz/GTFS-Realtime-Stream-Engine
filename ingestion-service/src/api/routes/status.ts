@@ -26,6 +26,7 @@ export function createStatusRouter(collections: ApiCollections): Router {
                 vehicle_id: doc['vehicle_id'] as string,
                 trip_id: doc['trip_id'] as string,
                 route_id: (doc['route_id'] as string | undefined) ?? null,
+                route_long_name: (doc['route_long_name'] as string | undefined) ?? null,
                 direction_id: (doc['direction_id'] as number | undefined) ?? null,
                 kind: doc['kind'] as 'arrival' | 'departure',
                 deviation_seconds: doc['deviation_seconds'] as number,
