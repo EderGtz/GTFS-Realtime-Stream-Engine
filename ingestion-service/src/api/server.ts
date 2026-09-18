@@ -17,7 +17,17 @@ import type { ApiCollections } from '../db/connection.js';
 export function createApp(collections?: ApiCollections): express.Express {
     const app = express();
 
-    app.use(helmet());
+    app.use(helmet({
+        contentSecurityPolicy: {
+            directives: {
+                defaultSrc: ["'self'"],
+                scriptSrc: ["'self'", "unpkg.com"],
+                styleSrc: ["'self'", "unpkg.com", "'unsafe-inline'"],
+                imgSrc: ["'self'", "data:", "tile.openstreetmap.org", "*.tile.openstreetmap.org"],
+                connectSrc: ["'self'"],
+            },
+        },
+    }));
     app.use(cors());
     app.use(rateLimiter);
 
