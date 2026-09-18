@@ -1,6 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import { join } from 'node:path';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { createStatusRouter } from './routes/status.js';
@@ -27,6 +28,17 @@ export function createApp(collections?: ApiCollections): express.Express {
 
     app.get('/health', (_req, res) => {
         res.json({ status: 'ok' });
+    });
+
+    // Static files — map.html, map.js
+    app.use(express.static(join(import.meta.dirname, '../public')));
+
+    app.get('/map', (_req, res) => {
+        res.sendFile(join(import.meta.dirname, '../public/map.html'));
+    });
+
+    app.get('/', (_req, res) => {
+        res.redirect('/map');
     });
 
     // Delays route — only when MongoDB collections are available

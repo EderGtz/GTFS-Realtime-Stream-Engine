@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MBTA Live Transit Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; font-family: sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        #legend {
+            position: absolute; bottom: 20px; left: 20px; z-index: 1000;
+            background: white; padding: 12px; border-radius: 6px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3); font-size: 13px;
+        }
+        #legend h4 { margin: 0 0 8px 0; }
+        #legend div { margin: 3px 0; }
+        #legend .dot {
+            display: inline-block; width: 12px; height: 12px;
+            border-radius: 50%; margin-right: 6px; vertical-align: middle;
+        }
+        #legend .line {
+            display: inline-block; width: 20px; height: 3px;
+            margin-right: 6px; vertical-align: middle;
+            border-radius: 2px;
+        }
+        #stats {
+            position: absolute; top: 10px; right: 10px; z-index: 1000;
+            background: white; padding: 10px 14px; border-radius: 6px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3); font-size: 12px;
+            line-height: 1.6;
+        }
+        #stats .stale { color: #e74c3c; font-weight: bold; }
+        #stats .fresh { color: #27ae60; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="legend">
+        <h4>Schedule Deviation</h4>
+        <div><span class="dot" style="background:#2ecc71"></span> On time (&plusmn;2 min)</div>
+        <div><span class="dot" style="background:#f1c40f"></span> Slightly late (2&ndash;5 min)</div>
+        <div><span class="dot" style="background:#e67e22"></span> Late (5&ndash;10 min)</div>
+        <div><span class="dot" style="background:#e74c3c"></span> Very late (&gt;10 min)</div>
+        <div><span class="dot" style="background:#3498db"></span> Early (&gt;2 min)</div>
+        <hr>
+        <div><span class="dot" style="background:#9b59b6; border: 2px solid #6c3483; width:10px; height:10px;"></span> Bunching vehicle</div>
+        <div><span class="line" style="background:#9b59b6"></span> Bunching link</div>
+    </div>
+    <div id="stats">Loading...</div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/map.js"></script>
+</body>
+</html>
