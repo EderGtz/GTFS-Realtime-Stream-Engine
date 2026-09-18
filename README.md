@@ -6,7 +6,7 @@ An event-driven pipeline that ingests, processes, and analyzes real-time public 
 
 Most "real-time transit dashboard" projects call a pre-digested status API (like the ones provided by Transport For London or Bay Area Rapid Transit) and render it on a map. This one doesn't. It ingests **raw binary GTFS-Realtime feeds** (the actual protobuf format transit agencies publish), decouples ingestion from processing with **Kafka**, and computes its own delay and bunching metrics instead of trusting someone else's summary.
 
-The goal is to build a real, working end-to-end event-driven system using real public data instead of mocked data — and to have something that actually runs continuously and produces real numbers, not just a diagram of what it would do. There is no frontend in this MVP: the pipeline itself (ingestion → streaming → analytics → API) is the product, and a `curl`/terminal demo against the live API will be the proof it works.
+The goal is to build a real, working end-to-end event-driven system using real public data instead of mocked data — and to have something that actually runs continuously and produces real numbers. The pipeline itself (ingestion → streaming → analytics → API) is the core product. A `curl`/terminal demo proves the pipeline works; a lightweight Leaflet map served from the same Express server proves the data is useful.
 
 ## Architecture Overview
 
@@ -77,10 +77,10 @@ The MVP is scoped deliberately small and built in order, with each phase a worki
 - **One transit agency, one feed type**: MBTA's `VehiclePositions` GTFS-Realtime feed — not the full GTFS-RT spec, not multiple agencies.
 - **Two computed metrics** — schedule deviation (is a vehicle late, and by how much) and bunching detection (are two vehicles on the same route too close together) — not the full list of possible analytics. Bunching thresholds get decided from real MBTA data (see Phase 3).
 - **One serving endpoint** (`GET /v1/status/live`) before building out reliability history or bottleneck detection.
-- **No frontend.** Proof of a working pipeline will be a `curl`/terminal demo against the live API, not a UI. A dashboard is real future work if there's ever a reason to build one (see Future Work) — it isn't part of this MVP.
-- **Runs continuously, not just once.** The MVP isn't "done" until it's been deployed somewhere that stays up 24/7 and has collected real data over multiple days (see Phase 5).
+- **A lightweight map.** A static Leaflet page served from Express, consuming `/v1/status/live` on a polling interval. It shows deviation markers and bunching events on a map of Boston. The `curl` demo proves the pipeline works; the map proves the data is useful.
+- **Runs continuously.** The MVP isn't "done" until it's been deployed somewhere that stays up 24/7 and has collected real data over multiple days (see Phase 6).
 
-Everything else (trip-update feeds, historical reliability windows, bottleneck clustering, a dashboard) is real future work, described at the end of this README, not part of the MVP.
+Everything else (trip-update feeds, historical reliability windows, bottleneck clustering, multiple agencies) is real future work, described at the end of this README, not part of the MVP.
 
 ## Build Phases
 
@@ -224,7 +224,23 @@ Kept deliberately minimal so the full pipeline — ingest → stream → analyze
 ![Phase 4 Live API Demo](docs/img/phase4_demo.gif)
 *Terminal recording showing `curl http://localhost:3000/v1/status/live` returning real, live MBTA-derived delay and bunching data. The response should show the `delays` array with vehicle deviations, the `bunching` array with vehicle-pair events, and the `meta` object with counts.*
 
-### Phase 5 — Production Hardening & 24/7 Runtime (final step)
+### Phase 5 — Pre-Deployment Improvements
+
+**Goal: make the deployed system useful from day one — enriched data and a visual demo.**
+
+These two improvements are done before deployment (Phase 6) so the system ships with human-readable route names and a live map..
+
+**Step 1 — Route name enrichment.** The analytics engine currently stores `route_id` ("19") but not the human-readable name. The GTFS-static bundle already contains `routes.txt` with `route_long_name`. This step wires that lookup through the existing pipeline: `loader.py` loads `routes.txt`, `consumer.py` attaches `route_long_name` to deviation results, `writer.py` persists it, and the API returns it. The enrichment is optional — if the lookup fails, the field is `null` and the API falls back to `route_id`.
+
+**Step 4 — Leaflet map.** A static HTML page served from the existing Express server that shows deviation markers on a map of Boston using Leaflet and OpenStreetMap tiles. Markers are color-coded by severity (green = on time, yellow = slightly late, red = very late, blue = early). Clicking a marker shows a popup with the route name, vehicle ID, and deviation in minutes. The map polls `/v1/status/live` every 30 seconds.
+
+**Acceptance criteria:**
+- [ ] `GET /v1/status/live` returns `route_long_name` alongside `route_id`
+- [ ] `GET /map` serves the Leaflet map with deviation markers at correct coordinates
+- [ ] Marker popups show route name, vehicle ID, and deviation
+- [ ] Unit tests pass for the new loader lookups and enriched response shape
+
+### Phase 6 — Production Hardening & 24/7 Runtime (final step)
 
 **Goal: stop running this project on a laptop. Deploy it somewhere that stays up, and let it actually collect real history.**
 
@@ -265,7 +281,7 @@ The MVP is deliberately narrow, but the pipeline underneath it produces data wit
 - **Bottleneck detection** — clustering locations where vehicle speeds consistently drop, exposed through `/v1/bottlenecks`, useful for spotting recurring congestion points rather than one-off delays.
 - **Prediction accuracy tracking** — GTFS-RT trip updates include MBTA's *own* predicted arrival times; comparing those predictions against what actually happened over time is a low-infrastructure way to measure how trustworthy the agency's own ETAs really are, without needing to train a model from scratch.
 - **Full silent-vehicle / feed-gap detection** — Phase 1 tracks per-vehicle last-seen timestamps; a dedicated alerting pass on top of that (flagging a vehicle that's gone quiet mid-service) is often a more actionable signal than a vehicle that's simply running late.
-- **A dashboard** — if there's ever a concrete reason to build one (e.g. demoing to a non-technical audience), a simple live map (e.g. via Leaflet) consuming `/v1/status/live` on a polling interval. Deliberately not part of the MVP, the terminal/GIF demo already proves the pipeline works.
+- **A dashboard** — the Leaflet map is the first version of this. A richer dashboard with historical trends, route-level comparisons, or real-time WebSocket updates is real future work on top of the map foundation.
 - **A public weekly reliability report** — once enough historical data accumulates, a simple scheduled job could publish a "which routes were least reliable this week" summary, turning the pipeline from a live view into an ongoing dataset with its own long-term value.
 
 ## Repository Structure
@@ -274,10 +290,10 @@ Two independent services connected by Kafka — not a single app, and not per-ag
 
 ```
 gtfs-realtime-stream-engine/
-├── docker-compose.yml            # Kafka, MongoDB, both services — Phase 5 runtime
+├── docker-compose.yml            # Kafka, MongoDB
 ├── README.md
 │
-├── ingestion-service/             # Phases 1, 2, 4 — TypeScript
+├── ingestion-service/             # Phases 1, 2, 4, 5 — TypeScript
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── .env                       # MBTA_API_KEY, MongoDB URI, Kafka broker (gitignored)
@@ -311,6 +327,10 @@ gtfs-realtime-stream-engine/
 │   │   │       ├── rateLimiter.ts  # 100 req/15min per IP
 │   │   │       └── errorHandler.ts # Sanitized error responses
 │   │   │
+│   │   ├── public/                   # Phase 5 — static files served by Express
+│   │   │   ├── map.html              # Leaflet map page (OSM tiles, deviation markers)
+│   │   │   └── map.js                # Map logic: fetch /v1/status/live, render markers
+│   │   │
 │   │   └── utils/
 │   │       └── logger.ts           # Structured logging (poll failures, decode errors)
 │   │
@@ -328,7 +348,7 @@ gtfs-realtime-stream-engine/
 │           ├── kafka.test.ts       # Phase 2 — Kafka roundtrip (testcontainers)
 │           └── api.test.ts         # Phase 4 — endpoint + MongoDB (testcontainers)
 │
-├── analytics-engine/               # Phase 3 — Python
+├── analytics-engine/               # Phases 3, 5 — Python
 │   ├── pyproject.toml
 │   ├── .env                        # Mongo URI, Kafka broker (gitignored)
 │   ├── src/
@@ -387,7 +407,7 @@ gtfs-realtime-stream-engine/
         └── python-integration-tests.yml  # CI: analytics engine integration (testcontainers)
 ```
 
-**Why two services and not one:** the whole architectural point of this project is that ingestion (TypeScript, I/O-bound polling) and analytics (Python, pandas/data-shape work) are genuinely different workloads decoupled by Kafka. `ingestion-service` also owns the serving API (Phase 4), since it's the same runtime that already talks to MongoDB and Express; there's no reason to add a third service just to expose one endpoint.
+**Why two services and not one:** the whole architectural point of this project is that ingestion (TypeScript, I/O-bound polling) and analytics (Python, pandas/data-shape work) are genuinely different workloads decoupled by Kafka. `ingestion-service` also owns the serving API (Phase 4) and the Leaflet map (Phase 5), since it's the same runtime that already talks to MongoDB and Express; there's no reason to add a third service just to expose one endpoint or serve a static HTML page.
 
 **Why no `adapters/` directory:** an earlier draft of this plan considered a pluggable adapter pattern for multiple transit agencies (TfL, BART, MBTA, CTA, etc.). That's explicitly out of scope for this MVP — one feed, done well, is the point (see MVP Scope above). If a second agency is ever added as real future work, `ingestion/poller.ts` and `decoder.ts` are the two files that would need an interface extracted from them at that time — not before there's a second real implementation to justify it.
 
@@ -422,10 +442,15 @@ flowchart TD
 
     subgraph P4["Phase 4 — Serving API (Express)"]
         API["GET /v1/status/live"]
-        DEMO["curl / terminal demo\n(no frontend in MVP)"]
+        DEMO["curl / terminal demo\n+ Leaflet map (Phase 5)"]
     end
 
-    subgraph P5["Phase 5 — Production Hardening"]
+    subgraph P5["Phase 5 — Map & Route Enrichment"]
+        MAP["Leaflet Map\nGET /map"]
+        ENRICH["Route Name Enrichment\nroute_long_name"]
+    end
+
+    subgraph P6["Phase 6 — Production Hardening"]
         DEPLOY["Docker Compose\non VPS / cloud VM\nrunning 24/7"]
         CI["CI: full test suite\non every push"]
     end
@@ -439,6 +464,8 @@ flowchart TD
     DEVIATIONS --> API
     BUNCHING --> API
     API --> DEMO
+    API --> MAP
+    ENRICH --> DEVIATIONS
     P1 -.-> CI
     P2 -.-> CI
     P3 -.-> CI
@@ -453,9 +480,10 @@ flowchart TD
     style P3 fill:#1e5f3a,color:#fff
     style P4 fill:#5f4a1e,color:#fff
     style P5 fill:#4a4a1e,color:#fff
+    style P6 fill:#4a1e4a,color:#fff
 ```
 
-*(Dashed arrows show CI and deployment applying across all four build phases, closed out in Phase 5.)*
+*(Dashed arrows show CI and deployment applying across all build phases, closed out in Phase 6.)*
 
 ---
 
