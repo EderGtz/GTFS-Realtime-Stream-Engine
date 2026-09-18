@@ -31,7 +31,12 @@ import pandas as pd
 from metrics.schedule_deviation import ScheduledStopTime
 from utils.logger import get_logger
 
-_REQUIRED_FILES = ("stops.txt", "trips.txt", "stop_times.txt")
+_REQUIRED_FILES = (
+    "stops.txt", 
+    "trips.txt", 
+    "stop_times.txt", 
+    "routes.txt"
+    )
 _OPTIONAL_VERSION_FILE = "feed_info.txt"
 
 # analytics-engine/src/gtfs_static/loader.py. parents[2] == analytics-engine/
@@ -46,6 +51,7 @@ _REQUIRED_COLUMNS = {
         "departure_time",
     },
     "stops.txt": {"stop_id"},
+    "routes.txt": {"route_id", "route_long_name"},
 }
 
 logger = get_logger(__name__)
@@ -79,6 +85,8 @@ class GtfsStaticData:
         self.direction_lookup: dict[str, int] = {}
         self.stop_times_lookup: dict[tuple[str, int], ScheduledStopTime] = {}
         self.stops_lookup: dict[str, StopInfo] = {}
+        self.routes_lookup: dict[str, str | None] = {}
+        self.trip_route_lookup: dict[str, str] = {}
 
         self._current_version: str | None = None
 
@@ -105,21 +113,30 @@ class GtfsStaticData:
             self.gtfs_dir / "stops.txt", 
             dtype={"stop_id": str},
         )
+        routes_df = pd.read_csv(
+            self.gtfs_dir / "routes.txt",
+            dtype={"route_id": str},
+        )
 
         self._validate_columns("trips.txt", trips_df)
         self._validate_columns("stop_times.txt", stop_times_df)
         self._validate_columns("stops.txt", stops_df)
+        self._validate_columns("routes.txt", routes_df)
 
         # Build everything into local variables first.
         # The current snapshot is only replaced after all validation/building succeeds
         direction_lookup = self._build_direction_lookup(trips_df)
         stop_times_lookup = self._build_stop_times_lookup(stop_times_df)
         stops_lookup = self._build_stops_lookup(stops_df)
+        routes_lookup = self._build_routes_lookup(routes_df)
+        trip_route_lookup = self._build_trip_route_lookup(trips_df)
         version = self._compute_version()
 
         self.direction_lookup = direction_lookup
         self.stop_times_lookup = stop_times_lookup
         self.stops_lookup = stops_lookup
+        self.routes_lookup = routes_lookup
+        self.trip_route_lookup = trip_route_lookup
         self._current_version = version
 
     def has_changed(self) -> bool:
@@ -276,6 +293,31 @@ class GtfsStaticData:
                 stop_lon=stop_lon,
             )
         return lookup
+
+    @staticmethod
+    def _build_routes_lookup(routes_df: pd.DataFrame) -> dict[str, str | None]:
+        """Build route_id -> route_long_name mapping from routes.txt.
+
+        Stores None for missing names so the API returns null consistently
+        rather than omitting the field (some MBTA shuttle routes lack a
+        route_long_name).
+        """
+        lookup: dict[str, str | None] = {}
+        for row in routes_df.itertuples():
+            route_id = str(row.route_id)
+            name = str(row.route_long_name) if pd.notna(row.route_long_name) else None
+            lookup[route_id] = name
+        return lookup
+
+    @staticmethod
+    def _build_trip_route_lookup(trips_df: pd.DataFrame) -> dict[str, str]:
+        """Build trip_id -> route_id mapping from trips.txt.
+
+        Used to resolve which route a deviation belongs to, without
+        depending on the window's pings having both fields.
+        """
+        valid = trips_df.dropna(subset=["trip_id", "route_id"])
+        return {str(row.trip_id): str(row.route_id) for row in valid.itertuples()}
 
     def _compute_version(self) -> str:
         feed_info_path = self.gtfs_dir / _OPTIONAL_VERSION_FILE

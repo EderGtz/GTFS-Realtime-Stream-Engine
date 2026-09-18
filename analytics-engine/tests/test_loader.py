@@ -38,6 +38,12 @@ def gtfs_dir(tmp_path):
     ])
     stop_times.to_csv(tmp_path / "stop_times.txt", index=False)
 
+    routes = pd.DataFrame([
+        {"route_id": "Red", "route_long_name": "Red Line"},
+        {"route_id": "Blue", "route_long_name": None},  # missing name
+    ])
+    routes.to_csv(tmp_path / "routes.txt", index=False)
+
     return tmp_path
 
 
@@ -96,6 +102,9 @@ class TestLoad:
         ])
         stop_times.to_csv(tmp_path / "stop_times.txt", index=False)
 
+        routes = pd.DataFrame([{"route_id": "R1", "route_long_name": "Route 1"}])
+        routes.to_csv(tmp_path / "routes.txt", index=False)
+
         data = GtfsStaticData(tmp_path)
         data.load()
 
@@ -131,7 +140,7 @@ class TestLoad:
 
     def test_raises_clearly_when_a_required_file_is_missing(self, tmp_path):
         (tmp_path / "stops.txt").write_text("stop_id\n1\n")
-        # trips.txt and stop_times.txt deliberately absent
+        # trips.txt, stop_times.txt, and routes.txt deliberately absent
 
         data = GtfsStaticData(tmp_path)
         with pytest.raises(FileNotFoundError, match="trips.txt"):
@@ -163,6 +172,79 @@ class TestLoad:
         assert data.stop_times_lookup == original_stop_times_lookup
         assert data.stops_lookup == original_stops_lookup
         assert data._current_version == original_version
+
+    def test_builds_routes_lookup_from_routes_txt(self, gtfs_dir):
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+
+        assert data.routes_lookup["Red"] == "Red Line"
+        # Blue has a null route_long_name in the fixture
+        assert data.routes_lookup["Blue"] is None
+
+    def test_routes_lookup_stores_none_for_missing_name(self, gtfs_dir):
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+
+        # Blue route has None for route_long_name in the fixture
+        assert "Blue" in data.routes_lookup
+        assert data.routes_lookup["Blue"] is None
+
+    def test_raises_when_routes_txt_is_missing(self, tmp_path):
+        """routes.txt is now a required file."""
+        stops = pd.DataFrame([{"stop_id": "1", "stop_name": "S"}])
+        stops.to_csv(tmp_path / "stops.txt", index=False)
+        trips = pd.DataFrame([{"trip_id": "t1", "route_id": "R1", "direction_id": 0}])
+        trips.to_csv(tmp_path / "trips.txt", index=False)
+        stop_times = pd.DataFrame([
+            {"trip_id": "t1", "stop_sequence": 1, "arrival_time": "08:00:00", "departure_time": "08:00:30"},
+        ])
+        stop_times.to_csv(tmp_path / "stop_times.txt", index=False)
+        # routes.txt deliberately absent
+
+        data = GtfsStaticData(tmp_path)
+        with pytest.raises(FileNotFoundError, match="routes.txt"):
+            data.load()
+
+    def test_raises_when_routes_txt_missing_required_columns(self, gtfs_dir):
+        """routes.txt must have both route_id and route_long_name."""
+        routes = pd.DataFrame([{"route_id": "Red"}])  # missing route_long_name
+        routes.to_csv(gtfs_dir / "routes.txt", index=False)
+
+        data = GtfsStaticData(gtfs_dir)
+        with pytest.raises(ValueError, match="route_long_name"):
+            data.load()
+
+    def test_builds_trip_route_lookup_from_trips_txt(self, gtfs_dir):
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+
+        assert data.trip_route_lookup["12345678"] == "Red"
+        assert data.trip_route_lookup["ADDED-1584904727"] == "Red"
+
+    def test_trip_route_lookup_excludes_trips_without_route_id(self, tmp_path):
+        """Trips with a missing route_id should be excluded from the lookup."""
+        stops = pd.DataFrame([{"stop_id": "1", "stop_name": "S"}])
+        stops.to_csv(tmp_path / "stops.txt", index=False)
+
+        trips = pd.DataFrame([
+            {"trip_id": "t1", "route_id": "R1", "direction_id": 0},
+            {"trip_id": "t2", "route_id": None, "direction_id": 0},  # no route_id
+        ])
+        trips.to_csv(tmp_path / "trips.txt", index=False)
+
+        stop_times = pd.DataFrame([
+            {"trip_id": "t1", "stop_sequence": 1, "arrival_time": "08:00:00", "departure_time": "08:00:30"},
+        ])
+        stop_times.to_csv(tmp_path / "stop_times.txt", index=False)
+
+        routes = pd.DataFrame([{"route_id": "R1", "route_long_name": "Route 1"}])
+        routes.to_csv(tmp_path / "routes.txt", index=False)
+
+        data = GtfsStaticData(tmp_path)
+        data.load()
+
+        assert data.trip_route_lookup["t1"] == "R1"
+        assert "t2" not in data.trip_route_lookup
 
 
 

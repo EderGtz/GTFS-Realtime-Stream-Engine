@@ -67,6 +67,8 @@ class DeviationResult:
     actual_at: pd.Timestamp
     deviation_seconds: float
     location: dict | None = None  # GeoJSON Point {"type": "Point", "coordinates": [lon, lat]} for 2dsphere indexing
+    route_id: str | None = None
+    route_long_name: str | None = None
 
 
 def parse_gtfs_time_offset(time_str: str) -> timedelta:

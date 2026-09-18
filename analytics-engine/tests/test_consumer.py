@@ -468,6 +468,110 @@ class TestLocationEnrichment:
         assert enriched[1].location is None
 
 
+class TestRouteNameEnrichment:
+    """Tests for AnalyticsConsumer._enrich_with_route_name, which attaches
+    route_id and route_long_name to DeviationResults from GTFS-static lookups."""
+
+    def _make_consumer_with_route_lookups(self, trip_route_lookup, routes_lookup):
+        """Helper: build a consumer with controlled route lookups."""
+        sink = MagicMock()
+        with patch("consumer.GtfsStaticData") as MockGtfs:
+            MockGtfs.return_value.stop_times_lookup = {}
+            MockGtfs.return_value.stops_lookup = {}
+            MockGtfs.return_value.direction_lookup = {}
+            MockGtfs.return_value.trip_route_lookup = trip_route_lookup
+            MockGtfs.return_value.routes_lookup = routes_lookup
+            consumer = AnalyticsConsumer(
+                kafka_config={"group.id": "test"},
+                topic="test",
+                on_window_result=sink,
+            )
+        return consumer
+
+    def test_enrichment_adds_route_id_and_name(self):
+        dev = DeviationResult(
+            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            deviation_seconds=300,
+        )
+        consumer = self._make_consumer_with_route_lookups(
+            trip_route_lookup={"t1": "Red"},
+            routes_lookup={"Red": "Red Line"},
+        )
+
+        enriched = consumer._enrich_with_route_name([dev])
+
+        assert len(enriched) == 1
+        assert enriched[0].route_id == "Red"
+        assert enriched[0].route_long_name == "Red Line"
+        # Original is not mutated (frozen dataclass)
+        assert dev.route_id is None
+        assert dev.route_long_name is None
+
+    def test_enrichment_sets_null_when_trip_not_in_lookup(self):
+        """When trip_id has no matching route, both fields should be None."""
+        dev = DeviationResult(
+            vehicle_id="v1", trip_id="unknown_trip", stop_sequence=5, kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            deviation_seconds=300,
+        )
+        consumer = self._make_consumer_with_route_lookups(
+            trip_route_lookup={"t1": "Red"},
+            routes_lookup={"Red": "Red Line"},
+        )
+
+        enriched = consumer._enrich_with_route_name([dev])
+
+        assert enriched[0].route_id is None
+        assert enriched[0].route_long_name is None
+
+    def test_enrichment_sets_null_name_when_route_has_no_long_name(self):
+        """When the route exists but has no route_long_name (e.g. shuttle)."""
+        dev = DeviationResult(
+            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            deviation_seconds=300,
+        )
+        consumer = self._make_consumer_with_route_lookups(
+            trip_route_lookup={"t1": "Shuttle-X"},
+            routes_lookup={"Shuttle-X": None},  # route exists but name is None
+        )
+
+        enriched = consumer._enrich_with_route_name([dev])
+
+        assert enriched[0].route_id == "Shuttle-X"
+        assert enriched[0].route_long_name is None
+
+    def test_enrichment_handles_empty_list(self):
+        consumer = self._make_consumer_with_route_lookups({}, {})
+        assert consumer._enrich_with_route_name([]) == []
+
+    def test_enrichment_mixed_results(self):
+        """Some trips map to routes, some don't."""
+        dev_known = DeviationResult(
+            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            deviation_seconds=300,
+        )
+        dev_unknown = DeviationResult(
+            vehicle_id="v2", trip_id="t_unknown", stop_sequence=1, kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:02:00"),
+            deviation_seconds=120,
+        )
+        consumer = self._make_consumer_with_route_lookups(
+            trip_route_lookup={"t1": "Red"},
+            routes_lookup={"Red": "Red Line"},
+        )
+
+        enriched = consumer._enrich_with_route_name([dev_known, dev_unknown])
+
+        assert len(enriched) == 2
+        assert enriched[0].route_id == "Red"
+        assert enriched[0].route_long_name == "Red Line"
+        assert enriched[1].route_id is None
+        assert enriched[1].route_long_name is None
+
+
 class TestCommitGating:
     """Tests that AnalyticsConsumer.run() only commits Kafka offsets when
     persistence succeeds, which is the core of the at-least-once delivery guarantee."""

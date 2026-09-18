@@ -164,6 +164,13 @@ def build_deviation_operations(results: list[DeviationResult]) -> list[UpdateOne
         if result.location is not None:
             document["location"] = result.location
 
+        # Route enrichment fields, only present when the consumer
+        # resolved the trip_id to a route via GTFS-static lookups.
+        if result.route_id is not None:
+            document["route_id"] = result.route_id
+        if result.route_long_name is not None:
+            document["route_long_name"] = result.route_long_name
+
         operations.append(UpdateOne(key, {"$set": document}, upsert=True))
 
     return operations

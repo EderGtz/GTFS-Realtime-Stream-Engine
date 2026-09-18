@@ -482,3 +482,54 @@ class TestBuildDeviationWithLocation:
                 [("location", "2dsphere")],
                 name="deviation_location_2dsphere",
             )
+
+
+class TestBuildDeviationWithRouteEnrichment:
+    """Tests that build_deviation_operations correctly includes route_id
+    and route_long_name when present, and omits them when None."""
+
+    def test_route_fields_included_when_present(self):
+        result = DeviationResult(
+            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            deviation_seconds=300,
+            route_id="Red", route_long_name="Red Line",
+        )
+        ops = build_deviation_operations([result])
+        doc = ops[0]._doc["$set"]
+        assert doc["route_id"] == "Red"
+        assert doc["route_long_name"] == "Red Line"
+
+    def test_route_fields_omitted_when_none(self):
+        result = DeviationResult(
+            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            deviation_seconds=300,
+        )
+        ops = build_deviation_operations([result])
+        doc = ops[0]._doc["$set"]
+        assert "route_id" not in doc
+        assert "route_long_name" not in doc
+
+    def test_mixed_route_enrichment(self):
+        """When processing multiple deviations, only those with route fields
+        get them in the document."""
+        dev_with_route = DeviationResult(
+            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            deviation_seconds=300,
+            route_id="Red", route_long_name="Red Line",
+        )
+        dev_without_route = DeviationResult(
+            vehicle_id="v2", trip_id="t2", stop_sequence=1, kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:02:00"),
+            deviation_seconds=120,
+        )
+        ops = build_deviation_operations([dev_with_route, dev_without_route])
+        doc_with = ops[0]._doc["$set"]
+        doc_without = ops[1]._doc["$set"]
+
+        assert doc_with["route_id"] == "Red"
+        assert doc_with["route_long_name"] == "Red Line"
+        assert "route_id" not in doc_without
+        assert "route_long_name" not in doc_without

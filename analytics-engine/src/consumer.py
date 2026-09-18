@@ -410,6 +410,23 @@ class AnalyticsConsumer:
 
         return enriched
 
+    def _enrich_with_route_name(
+        self, deviations: list[DeviationResult]
+    ) -> list[DeviationResult]:
+        """Attach route_id and route_long_name to deviation results.
+
+        route_id comes from trips.txt via the GTFS-static trip_route_lookup.
+        route_long_name comes from the GTFS-static routes_lookup.
+        """
+        enriched = []
+        for dev in deviations:
+            route_id = self.static_data.trip_route_lookup.get(dev.trip_id)
+            route_name = None
+            if route_id:
+                route_name = self.static_data.routes_lookup.get(route_id)
+            enriched.append(replace(dev, route_id=route_id, route_long_name=route_name))
+        return enriched
+
     def _process_window(
             self, 
             pings: pd.DataFrame
@@ -483,6 +500,7 @@ class AnalyticsConsumer:
                 reference_time,
             )
             new_deviations = self._enrich_with_location(new_deviations)
+            new_deviations = self._enrich_with_route_name(new_deviations)
         except Exception:
             logger.exception("Schedule-deviation computation failed for this window, skipping it.")
             new_deviations = []
