@@ -44,7 +44,7 @@ The goal is to build a real, working end-to-end event-driven system using real p
         ┌────────────────────────────────────────────────┐
         │       public-api (TypeScript / Express)        │
         │  - Serves computed delays & analytics          │
-        │  - GET /v1/delays/live                         │
+        │  - GET /v1/status/live                         │
         └────────────────────────────────────────────────┘
                                   │
                           (curl / terminal demo —
@@ -76,7 +76,7 @@ The MVP is scoped deliberately small and built in order, with each phase a worki
 
 - **One transit agency, one feed type**: MBTA's `VehiclePositions` GTFS-Realtime feed — not the full GTFS-RT spec, not multiple agencies.
 - **Two computed metrics** — schedule deviation (is a vehicle late, and by how much) and bunching detection (are two vehicles on the same route too close together) — not the full list of possible analytics. Bunching thresholds get decided from real MBTA data (see Phase 3).
-- **One serving endpoint** (`GET /v1/delays/live`) before building out reliability history or bottleneck detection.
+- **One serving endpoint** (`GET /v1/status/live`) before building out reliability history or bottleneck detection.
 - **No frontend.** Proof of a working pipeline will be a `curl`/terminal demo against the live API, not a UI. A dashboard is real future work if there's ever a reason to build one (see Future Work) — it isn't part of this MVP.
 - **Runs continuously, not just once.** The MVP isn't "done" until it's been deployed somewhere that stays up 24/7 and has collected real data over multiple days (see Phase 5).
 
@@ -185,7 +185,7 @@ Computed results are written to MongoDB. Schedule deviation documents are enrich
 - [x] Computed deviation results carry stop coordinates for geospatial indexing — `DeviationResult.location` enriched from GTFS-static `stops_lookup` via `consumer.py::_enrich_with_location`; 2dsphere index created on `schedule_deviations.location` in `writer.py`; validated by `test_consumer.py::TestLocationEnrichment` (6 tests) and `test_integration.py::TestMongoDBPersistence::test_deviation_with_location_persists_geojson`
 - [x] At-least-once delivery guarantee is implemented and tested — manual `commit(asynchronous=False)` gated on `persist_window` success; validated by `test_consumer.py::TestCommitGating` (5 tests covering success→commit, failure→skip, empty→skip, per-window gating, clean shutdown)
 - [x] Integration tests verify real Kafka and MongoDB infrastructure — 8 tests in `test_integration.py` using testcontainers (Kafka roundtrip, MongoDB indexes/upserts/2dsphere, end-to-end pipeline); CI workflow: `python-integration-tests.yml`
-- [ ] Sustained-outage behavior and other known tradeoffs are documented — see [Known Limitations](#known-limitations) section and `docs/guarantees.md`
+- [X] Sustained-outage behavior and other known tradeoffs are documented — see [Known Limitations](#known-limitations) section and `docs/guarantees.md`
 
 ### Phase 4 — Serving API (TypeScript / Express)
 
@@ -193,19 +193,36 @@ Computed results are written to MongoDB. Schedule deviation documents are enrich
 
 A thin Express API that reads from MongoDB and exposes it externally. The MVP ships exactly one endpoint:
 
-- `GET /v1/delays/live` — current delay/bunching status for active vehicles.
+- `GET /v1/status/live` — current delay/bunching status for active vehicles.
+
+The response contains three top-level fields: `delays` (schedule deviation entries), `bunching` (vehicle-pair proximity events), and `meta` (counts + timestamp for monitoring). Delays and bunching are separate arrays because they have different shapes and serve different consumers.
 
 Kept deliberately minimal so the full pipeline — ingest → stream → analyze → serve — is proven working end-to-end before expanding the API surface. `/v1/routes/:id/reliability` (historical punctuality) and `/v1/bottlenecks` (speed-drop clustering) are real, planned additions once the MVP loop is solid — see Future Work below.
 
-**The demo, since there is no dashboard in this MVP:** a GIF ( via `asciinema`) showing `curl http://localhost:3000/v1/delays/live` returning real, live MBTA-derived delay/bunching data. That's the proof-of-work artifact for this project, not a UI.
+**Security posture:** read-only public endpoint serving public transit data. Applied measures: Helmet security headers, CORS, rate limiting (100 req/15min per IP via `express-rate-limit`), error sanitization (generic messages in production, full details in dev/test), request logging via pino.
 
-**Testing:** an integration test that hits the endpoint against a seeded test database and checks the response shape and status code.
+**API as separate entry point:** the API server (`src/api/index.ts`) and the Kafka poller (`src/index.ts`) are different processes with different failure modes. The API is started via `npm run start:api`, the poller via `npm run dev`. They share the same MongoDB database but have independent lifecycles.
+
+**Implementation details:**
+- **MongoDB read connection:** `src/db/connection.ts` opens a dedicated connection with retry (same pattern as the analytics engine's `_connect_with_retry`), exposing `bunching_events` and `schedule_deviations` collections.
+- **Router factory pattern:** `createStatusRouter(collections)` receives MongoDB collections via dependency injection, keeping the route handler testable without a real database.
+- **Response mapping:** MongoDB documents are projected into typed response interfaces (`DelayEntry`, `BunchingEntry`, `LiveResponse`). Deviation documents that lack `route_id`/`direction_id` (not stored by the analytics engine) map those fields to `null` for a consistent response shape.
+
+**Testing:**
+- **Unit tests** (`tests/api/health.test.ts`, `tests/api/status.test.ts`): 10 tests covering health check, response shape with seeded mock data, empty database returns empty arrays, location null handling, ISO 8601 dates, error handling (500 on DB failure), and no-collections mode (404 when API starts without MongoDB).
+- **Integration test** (`tests/integration/api.test.ts`): 6 tests using testcontainers — spins up a real MongoDB, seeds known documents, hits the endpoint via supertest, asserts response shape and data fidelity. Also tests the empty-database case and rate limiting (429 after threshold).
+- **CI:** API unit tests run in the existing `unit-tests.yml` workflow (picked up by `vitest run --exclude tests/integration`). API integration tests run in `integration-tests.yml` alongside Kafka integration tests.
 
 **Acceptance criteria:**
-- [ ] `GET /v1/delays/live` returns real computed data from MongoDB
-- [ ] Integration test covers the endpoint's response shape
-- [ ] A recorded demo (terminal/GIF) exists showing the live endpoint returning real MBTA-derived data
-- [ ] CI runs the full test suite (Phases 1–4) on every push
+- [x] `GET /v1/status/live` returns real computed data from MongoDB
+- [x] Integration test covers the endpoint's response shape with seeded test data
+- [x] CI runs the full test suite (Phases 1–4) on every push
+- [x] A recorded demo exists showing the live endpoint returning real MBTA-derived data
+
+#### Live Demo
+
+![Phase 4 Live API Demo](docs/img/phase4_demo.gif)
+*Terminal recording showing `curl http://localhost:3000/v1/status/live` returning real, live MBTA-derived delay and bunching data. The response should show the `delays` array with vehicle deviations, the `bunching` array with vehicle-pair events, and the `meta` object with counts.*
 
 ### Phase 5 — Production Hardening & 24/7 Runtime (final step)
 
@@ -236,7 +253,7 @@ These are deliberate, documented tradeoffs. They are the current state of an MVP
 
 **Poll-interval bucket jitter can split continuous bunching events.** Real MBTA update cadence has jitter around the nominal 15-second interval (notebook 01 found a median of ~16s). Bucketing timestamps to a fixed poll-interval grid can split one real, continuous bunching event into two shorter ones if two vehicles' actual poll times straddle a bucket boundary. This is a known accuracy limitation, not a correctness bug.
 
-**Departure deviation proxy is not empirically validated.** `compute_departure_deviations()` uses the last `STOPPED_AT` ping before a vehicle transitions away from a stop as a proxy for the actual departure moment. Unlike arrival-collapsing (which was validated in notebook 03), this specific technique was never checked against real data. Treat it as a reasonable engineering extension pending its own empirical validation.
+**Departure deviations are disabled.** `compute_departure_deviations()` uses the last `STOPPED_AT` ping before a vehicle transitions away from a stop as a proxy for the actual departure moment. Unlike arrival-collapsing (which was validated in notebook 03), this specific technique was never checked against real data. It is disabled in `_process_window` pending: (1) empirical validation of the last-STOPPED_AT heuristic against ground truth, (2) a `MAX_DEVIATION` filter for ghost-shift outliers, and (3) re-adding the departure results to the deviation pipeline. The comment in `consumer.py` documents the re-enablement steps.
 
 **No cross-document atomicity.** `persist_window` writes bunching events and schedule deviations in separate `bulk_write` calls. If the second write fails after the first succeeds, the Kafka offset is not committed, and the idempotent upsert design ensures the retry converges to the correct state — but the two collections are never atomically consistent within a single window. See `docs/guarantees.md` for the full delivery and persistence model.
 
@@ -248,7 +265,7 @@ The MVP is deliberately narrow, but the pipeline underneath it produces data wit
 - **Bottleneck detection** — clustering locations where vehicle speeds consistently drop, exposed through `/v1/bottlenecks`, useful for spotting recurring congestion points rather than one-off delays.
 - **Prediction accuracy tracking** — GTFS-RT trip updates include MBTA's *own* predicted arrival times; comparing those predictions against what actually happened over time is a low-infrastructure way to measure how trustworthy the agency's own ETAs really are, without needing to train a model from scratch.
 - **Full silent-vehicle / feed-gap detection** — Phase 1 tracks per-vehicle last-seen timestamps; a dedicated alerting pass on top of that (flagging a vehicle that's gone quiet mid-service) is often a more actionable signal than a vehicle that's simply running late.
-- **A dashboard** — if there's ever a concrete reason to build one (e.g. demoing to a non-technical audience), a simple live map (e.g. via Leaflet) consuming `/v1/delays/live` on a polling interval. Deliberately not part of the MVP, the terminal/GIF demo already proves the pipeline works.
+- **A dashboard** — if there's ever a concrete reason to build one (e.g. demoing to a non-technical audience), a simple live map (e.g. via Leaflet) consuming `/v1/status/live` on a polling interval. Deliberately not part of the MVP, the terminal/GIF demo already proves the pipeline works.
 - **A public weekly reliability report** — once enough historical data accumulates, a simple scheduled job could publish a "which routes were least reliable this week" summary, turning the pipeline from a live view into an ongoing dataset with its own long-term value.
 
 ## Repository Structure
@@ -282,27 +299,34 @@ gtfs-realtime-stream-engine/
 │   │   │   └── producer.ts         # Publishes to Kafka raw.vehicle-positions (Phase 2; Phase 1 writes to Mongo directly instead)
 │   │   │
 │   │   ├── db/
-│   │   │   ├── connection.ts       # MongoDB connection
-│   │   │   └── vehicle-telemetry.model.ts
+│   │   │   └── connection.ts       # MongoDB read connection with retry (Phase 4)
 │   │   │
 │   │   ├── api/
-│   │   │   ├── server.ts           # Express app (Phase 4)
-│   │   │   └── routes/
-│   │   │       └── delays.ts       # GET /v1/delays/live
+│   │   │   ├── index.ts            # API entry point (Phase 4)
+│   │   │   ├── server.ts           # Express app: helmet, cors, rate limiting
+│   │   │   ├── types.ts            # Response type definitions
+│   │   │   ├── routes/
+│   │   │   │   └── status.ts       # GET /v1/status/live
+│   │   │   └── middleware/
+│   │   │       ├── rateLimiter.ts  # 100 req/15min per IP
+│   │   │       └── errorHandler.ts # Sanitized error responses
 │   │   │
 │   │   └── utils/
 │   │       └── logger.ts           # Structured logging (poll failures, decode errors)
 │   │
 │   └── tests/
+│       ├── config.test.ts
 │       ├── decoder.test.ts
+│       ├── poller.test.ts
 │       ├── producer.test.ts
-        ├── config.test.ts
-        ├── decoder.test.ts
-        ├── poller.test.ts
-        ├── setup-kafka.test.ts
-        ├── validator.test.ts
-│       └── api/
-│           └── delays.test.ts      # Phase 4 — integration test, seeded test DB
+│       ├── setup-kafka.test.ts
+│       ├── validator.test.ts
+│       ├── api/
+│       │   ├── health.test.ts      # Phase 4 — health check tests
+│       │   └── status.test.ts      # Phase 4 — response shape, empty state, error handling
+│       └── integration/
+│           ├── kafka.test.ts       # Phase 2 — Kafka roundtrip (testcontainers)
+│           └── api.test.ts         # Phase 4 — endpoint + MongoDB (testcontainers)
 │
 ├── analytics-engine/               # Phase 3 — Python
 │   ├── pyproject.toml
@@ -313,7 +337,8 @@ gtfs-realtime-stream-engine/
 │   │   │
 │   │   ├── consumer.py             # Kafka consumer, time-windowed batching, dedup/update trackers
 │   │   ├── gtfs_static/
-│   │   │   └── loader.py           # Atomic-reload GTFS-static loader, version-check refresh
+│   │   │   ├── loader.py           # Atomic-reload GTFS-static loader, version-check refresh
+│   │   │   └── refresh.py          # ETag-based GTFS ZIP download from MBTA
 │   │   │
 │   │   ├── metrics/
 │   │   │   ├── schedule_deviation.py  # Arrival/departure deviation, GTFS time parsing
@@ -339,16 +364,20 @@ gtfs-realtime-stream-engine/
 │       ├── test_loader.py
 │       ├── test_consumer.py
 │       ├── test_writer.py
+│       ├── test_refresh.py         # GTFS-static download/extract (mocked HTTP)
 │       └── test_integration.py     # Kafka + MongoDB via testcontainers
 │
 ├── docs/
 │   ├── guarantees.md               # System guarantees: delivery, persistence, ordering
-│   └── final/
-│       ├── phase1_demo.gif             # Phase 1 live ingestion demo
-│       ├── phase1_mongo.png            # Phase 1 MongoDB view
-│       ├── phase2_compose.gif          # Phase 2 Docker Compose demo
-│       ├── phase2_roundtrip.gif        # Phase 2 Kafka roundtrip test
-│       └── phase2_kafkaUI.png          # Phase 2 Kafbat UI
+│   ├── analyticsEngineProcessingCycle.md  # How the consumer processes pings into metrics
+│   ├── kafkaIntegrationTestExplanation.md # testcontainers readiness-gate strategy
+│   └── img/
+│       ├── phase1_demo.gif         # Phase 1 live ingestion demo
+│       ├── phase1_mongo.png        # Phase 1 MongoDB view
+│       ├── phase2_compose.gif      # Phase 2 Docker Compose demo
+│       ├── phase2_roundtrip.gif    # Phase 2 Kafka roundtrip test
+│       ├── phase2_kafkaUI.png      # Phase 2 Kafbat UI
+│       └── phase4_demo.gif         # Phase 4 curl demo (PLACEHOLDER — record this)
 │
 └── .github/
     └── workflows/
@@ -392,7 +421,7 @@ flowchart TD
     end
 
     subgraph P4["Phase 4 — Serving API (Express)"]
-        API["GET /v1/delays/live"]
+        API["GET /v1/status/live"]
         DEMO["curl / terminal demo\n(no frontend in MVP)"]
     end
 
