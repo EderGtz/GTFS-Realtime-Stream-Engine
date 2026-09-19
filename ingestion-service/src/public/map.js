@@ -13,7 +13,7 @@ const MAP_ZOOM = 12;
 
 const map = L.map('map').setView(MAP_CENTER, MAP_ZOOM);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 19,
 }).addTo(map);

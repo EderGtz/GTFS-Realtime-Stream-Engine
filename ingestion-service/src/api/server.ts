@@ -23,9 +23,17 @@ export function createApp(collections?: ApiCollections): express.Express {
                 defaultSrc: ["'self'"],
                 scriptSrc: ["'self'", "unpkg.com"],
                 styleSrc: ["'self'", "unpkg.com", "'unsafe-inline'"],
-                imgSrc: ["'self'", "data:", "tile.openstreetmap.org", "*.tile.openstreetmap.org"],
+                imgSrc: [
+                    "'self'", 
+                    "data:", 
+                    "tile.openstreetmap.org", 
+                    "*.tile.openstreetmap.org"
+                ],
                 connectSrc: ["'self'"],
             },
+        },
+        referrerPolicy: {
+            policy: 'strict-origin-when-cross-origin',
         },
     }));
     app.use(cors());
