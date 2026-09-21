@@ -11,6 +11,7 @@ const STALE_ERROR_MS = 180_000;  // 3 min  — red
 const MAP_CENTER = [42.3601, -71.0589];
 const MAP_ZOOM = 12;
 
+// L is the global namespace for the Leaflet map library
 const map = L.map('map').setView(MAP_CENTER, MAP_ZOOM);
 
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -90,6 +91,36 @@ function formatBunchingPopup(entry) {
     `;
 }
 
+// Marker cache 
+
+// Vehicles that briefly disappear from the API response (edge of the
+// server-side live window, processing lag) would flicker on/off every
+// refresh if we cleared everything and redrawn from scratch.
+//
+// Instead, the markers are kept in cache and they are only removed after the've
+// been absent for GRACE_REFRESHES consecutive polls.  While absent, the
+// marker is dimmed so the user can see it's going stale.
+//
+// GRACE_REFRESHES=2 means a vehicle can miss up to 2 polls (60 s) before
+// its marker is removed, which is enough to survive one analytics processing gap
+// (the engine runs every 60 s, the map polls every 30 s).
+
+const GRACE_REFRESHES = 2;
+const STALE_OPACITY   = 0.35;
+
+// { vehicleId: { marker, misses } }
+const delayCache = {};
+// { bunchKey: { markers: [circleA, circleB, line?], misses } }
+const bunchingCache = {};
+
+function delayMarkerKey(entry) {
+    return entry.vehicle_id;
+}
+
+function bunchingKey(entry) {
+    return `${entry.route_id}:${entry.vehicle_a}:${entry.vehicle_b}`;
+}
+
 // ── Data-age indicator ────────────────────────────────────────────────
 
 function formatAge(ms) {
@@ -116,16 +147,13 @@ function updateAgeIndicator() {
     }
 }
 
-// ── Main refresh ──────────────────────────────────────────────────────
+// ── Main refresh
 
 async function refresh() {
     try {
         const resp = await fetch(API_URL);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
-
-        delayLayer.clearLayers();
-        bunchingLayer.clearLayers();
 
         // Build a vehicle_id -> [lat, lon] index from deviations that
         // have location data.  This lets us place bunching markers at
@@ -138,30 +166,61 @@ async function refresh() {
             }
         }
 
-        // Draw deviation markers
+        const seenDelays = new Set();
+
+        // Each d of the response is a vehicle experimenting an anomaly
         for (const d of data.delays) {
             if (!d.location || !d.location.coordinates) continue;
+            const key = delayMarkerKey(d);
+            seenDelays.add(key);
+
             const [lon, lat] = d.location.coordinates;
             const color = deviationColor(d.deviation_seconds);
+            const popup = formatPopup(d);
 
-            L.circleMarker([lat, lon], {
-                radius: 8,
-                fillColor: color,
-                color: '#333',
-                weight: 1,
-                fillOpacity: 0.85,
-            })
-            .bindPopup(formatPopup(d))
-            .addTo(delayLayer);
+            if (delayCache[key]) {
+                // update existing marker's position, color, popup
+                const entry = delayCache[key];
+                entry.marker.setLatLng([lat, lon]);
+                entry.marker.setStyle({ fillColor: color });
+                entry.marker.setPopupContent(popup);
+                entry.marker.setStyle({ fillOpacity: 0.85, opacity: 1 });
+                entry.misses = 0;
+            } else {
+                // New marker
+                const marker = L.circleMarker([lat, lon], {
+                    radius: 6,
+                    fillColor: color,
+                    color: '#333',
+                    weight: 1,
+                    fillOpacity: 0.85,
+                })
+                .bindPopup(popup)
+                .addTo(delayLayer);
+
+                delayCache[key] = { marker, misses: 0 };
+            }
         }
 
-        // Draw bunching markers — two purple markers per event connected
-        // by a polyline.  Positions come from the vehicle index built
-        // above; when a vehicle has no known location (e.g. its
-        // deviation was outside the live window) we skip that half.
+        // Mark unseen deviations; dim or evict after grace period
+        for (const [key, entry] of Object.entries(delayCache)) {
+            if (seenDelays.has(key)) continue;
+            entry.misses++;
+            if (entry.misses >= GRACE_REFRESHES) {
+                delayLayer.removeLayer(entry.marker);
+                delete delayCache[key];
+            } else {
+                // Dim the marker to show it's going stale
+                entry.marker.setStyle({ fillOpacity: STALE_OPACITY, opacity: 0.4 });
+            }
+        }
+
+        // Update bunching markers
+
+        const seenBunching = new Set();
         const bunchingColor = '#9b59b6';
         const bunchingOpts = {
-            radius: 10,
+            radius: 8,
             fillColor: bunchingColor,
             color: '#6c3483',
             weight: 2,
@@ -169,29 +228,82 @@ async function refresh() {
         };
 
         for (const b of data.bunching) {
+            const key = bunchingKey(b);
+            seenBunching.add(key);
+
             const posA = vehiclePositions[b.vehicle_a];
             const posB = vehiclePositions[b.vehicle_b];
+            const popup = formatBunchingPopup(b);
 
-            if (posA) {
-                L.circleMarker(posA, bunchingOpts)
-                    .bindPopup(formatBunchingPopup(b))
+            if (bunchingCache[key]) {
+                // Existing — update positions and popup, reset misses
+                const entry = bunchingCache[key];
+                const [circleA, circleB, line] = entry.markers;
+
+                if (circleA && posA) {
+                    circleA.setLatLng(posA);
+                    circleA.setPopupContent(popup);
+                    circleA.setStyle({ fillOpacity: 0.9, opacity: 1 });
+                }
+                if (circleB && posB) {
+                    circleB.setLatLng(posB);
+                    circleB.setPopupContent(popup);
+                    circleB.setStyle({ fillOpacity: 0.9, opacity: 1 });
+                }
+                if (line && posA && posB) {
+                    line.setLatLngs([posA, posB]);
+                    line.setPopupContent(popup);
+                    line.setStyle({ opacity: 0.7 });
+                }
+                entry.misses = 0;
+            } else {
+                // New bunching event
+                const markers = [null, null, null];
+
+                if (posA) {
+                    markers[0] = L.circleMarker(posA, bunchingOpts)
+                        .bindPopup(popup)
+                        .addTo(bunchingLayer);
+                }
+                if (posB) {
+                    markers[1] = L.circleMarker(posB, bunchingOpts)
+                        .bindPopup(popup)
+                        .addTo(bunchingLayer);
+                }
+                if (posA && posB) {
+                    markers[2] = L.polyline([posA, posB], {
+                        color: bunchingColor,
+                        weight: 3,
+                        opacity: 0.7,
+                        dashArray: '6, 8',
+                    })
+                    .bindPopup(popup)
                     .addTo(bunchingLayer);
+                }
+
+                bunchingCache[key] = { markers, misses: 0 };
             }
-            if (posB) {
-                L.circleMarker(posB, bunchingOpts)
-                    .bindPopup(formatBunchingPopup(b))
-                    .addTo(bunchingLayer);
-            }
-            // Connect the pair with a line when both positions are known
-            if (posA && posB) {
-                L.polyline([posA, posB], {
-                    color: bunchingColor,
-                    weight: 3,
-                    opacity: 0.7,
-                    dashArray: '6, 8',
-                })
-                .bindPopup(formatBunchingPopup(b))
-                .addTo(bunchingLayer);
+        }
+
+        // Mark unseen bunching events; dim or evict after grace period
+        for (const [key, entry] of Object.entries(bunchingCache)) {
+            if (seenBunching.has(key)) continue;
+            entry.misses++;
+            if (entry.misses >= GRACE_REFRESHES) {
+                for (const m of entry.markers) {
+                    if (m) bunchingLayer.removeLayer(m);
+                }
+                delete bunchingCache[key];
+            } else {
+                // Dim all markers in this bunching event
+                for (const m of entry.markers) {
+                    if (!m) continue;
+                    if (m instanceof L.Polyline && !(m instanceof L.Polygon)) {
+                        m.setStyle({ opacity: 0.25 });
+                    } else {
+                        m.setStyle({ fillOpacity: STALE_OPACITY, opacity: 0.4 });
+                    }
+                }
             }
         }
 
@@ -215,7 +327,6 @@ async function refresh() {
         console.error('Failed to refresh:', err);
         const statsEl = document.getElementById('stats');
         if (lastRefreshTime) {
-            const age = Date.now() - lastRefreshTime.getTime();
             statsEl.innerHTML = `
                 <span style="color:red">Connection error</span><br>
                 <small id="data-age"></small>
