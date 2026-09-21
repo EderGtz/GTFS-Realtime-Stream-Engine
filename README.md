@@ -228,17 +228,31 @@ Kept deliberately minimal so the full pipeline — ingest → stream → analyze
 
 **Goal: make the deployed system useful from day one — enriched data and a visual demo.**
 
-These two improvements are done before deployment (Phase 6) so the system ships with human-readable route names and a live map..
+These improvements are done before deployment (Phase 6) so the system ships with human-readable route names and a live map.
 
-**Step 1 — Route name enrichment.** The analytics engine currently stores `route_id` ("19") but not the human-readable name. The GTFS-static bundle already contains `routes.txt` with `route_long_name`. This step wires that lookup through the existing pipeline: `loader.py` loads `routes.txt`, `consumer.py` attaches `route_long_name` to deviation results, `writer.py` persists it, and the API returns it. The enrichment is optional — if the lookup fails, the field is `null` and the API falls back to `route_id`.
+**Step 1 — Route name enrichment.** The analytics engine now loads `routes.txt` from the GTFS-static bundle and builds two new lookups: `routes_lookup` (route_id → route_long_name) and `trip_route_lookup` (trip_id → route_id). The consumer attaches both `route_id` and `route_long_name` to deviation results before persisting to MongoDB. The enrichment is optional — if the lookup fails, the fields are `null` and the API falls back gracefully. Added to `loader.py`, `schedule_deviation.py` (DeviationResult dataclass), `consumer.py` (`_enrich_with_route_name`), `writer.py`, `types.ts`, and `status.ts`. Unit tests cover the new lookups (routes loading, NaN handling, missing columns, trip-to-route mapping) and the enriched consumer output.
 
-**Step 4 — Leaflet map.** A static HTML page served from the existing Express server that shows deviation markers on a map of Boston using Leaflet and OpenStreetMap tiles. Markers are color-coded by severity (green = on time, yellow = slightly late, red = very late, blue = early). Clicking a marker shows a popup with the route name, vehicle ID, and deviation in minutes. The map polls `/v1/status/live` every 30 seconds.
+**Step 2 — Live window filtering.** The `/v1/status/live` endpoint now filters out stale data using a 3-minute time window (`LIVE_WINDOW_MS`). Deviations are filtered by `actual_at >= cutoff`; bunching events by `end_time >= cutoff`. This prevents the map from accumulating historical markers that no longer represent current conditions. The window is set to 3× the analytics engine's processing interval (60s) to cover the current window buffer, one overlap cycle, and API polling jitter.
+
+**Step 3 — Leaflet map.** A static HTML page served from Express at `/map` shows deviation markers and bunching events on a map of Boston using Leaflet basemap tiles. Deviation markers are color-coded by severity (green = on time, yellow = slightly late, red = very late, blue = early) and sized proportionally. Bunching events are visualized as paired purple markers (one per vehicle) connected by a dashed polyline, placed at the vehicles' last known deviation positions. Clicking a marker shows a popup with the route name, vehicle ID, and deviation. Clicking a bunching marker shows a table with route, vehicles, minimum distance, and duration. The stats panel shows live counts, last update time, and a data-age indicator that turns yellow (1.5 min) then red (3 min) when the data goes stale.
+
+**Step 4 — Anti-flicker marker caching.** The map uses a client-side marker cache (`delayCache`, `bunchingCache`) instead of clearing and redrawing all markers on each refresh. Markers that briefly disappear from the API response (edge of the live window, processing lag) are dimmed to 35% opacity and kept on the map for up to 2 additional refresh cycles (60 seconds) before removal. This prevents the visual flickering caused by vehicles at the boundary of the 3-minute server-side time window.
+
+**Step 5 — Frontend shape fixture tests.** A dedicated test file (`tests/api/map.test.ts`) builds a realistic API fixture and verifies the response shape matches what `map.js` consumes: every field the popup formatters read, valid GeoJSON coordinates, ISO 8601 timestamps, deviation color thresholds, and the bunching-vehicle cross-reference (matching `vehicle_a`/`vehicle_b` back to deviation locations). This catches API shape drift without needing a headless browser.
 
 **Acceptance criteria:**
-- [ ] `GET /v1/status/live` returns `route_long_name` alongside `route_id`
-- [ ] `GET /map` serves the Leaflet map with deviation markers at correct coordinates
-- [ ] Marker popups show route name, vehicle ID, and deviation
-- [ ] Unit tests pass for the new loader lookups and enriched response shape
+- [x] `GET /v1/status/live` returns `route_long_name` alongside `route_id`
+- [x] `GET /v1/status/live` filters out data older than 3 minutes
+- [x] `GET /map` serves the Leaflet map with deviation markers and bunching visualizations
+- [x] Bunching popups show a table with route, vehicles, distance, and duration
+- [x] Marker caching prevents flickering when vehicles cross the time window boundary
+- [x] Unit tests pass for the new loader lookups, enriched response shape, and time-window filtering
+- [x] Frontend shape fixture tests verify the API contract matches what map.js expects
+
+#### Live Demo
+
+![Phase 5 Leaflet Map](docs/img/phase5_map.png)
+*Leaflet map showing deviation markers (colored by severity) and bunching events (purple markers) on a map of Boston. The stats panel displays live counts and a data-age indicator. Clicking a deviation marker shows the route name, vehicle ID, and deviation. Clicking a bunching marker shows a table with route, vehicles, minimum distance, and duration.*
 
 ### Phase 6 — Production Hardening & 24/7 Runtime (final step)
 
@@ -343,7 +357,8 @@ gtfs-realtime-stream-engine/
 │       ├── validator.test.ts
 │       ├── api/
 │       │   ├── health.test.ts      # Phase 4 — health check tests
-│       │   └── status.test.ts      # Phase 4 — response shape, empty state, error handling
+│       │   ├── status.test.ts      # Phase 4/5 — response shape, filtering, error handling
+│       │   └── map.test.ts         # Phase 5 — static file serving, frontend shape fixture
 │       └── integration/
 │           ├── kafka.test.ts       # Phase 2 — Kafka roundtrip (testcontainers)
 │           └── api.test.ts         # Phase 4 — endpoint + MongoDB (testcontainers)
@@ -445,9 +460,10 @@ flowchart TD
         DEMO["curl / terminal demo\n+ Leaflet map (Phase 5)"]
     end
 
-    subgraph P5["Phase 5 — Map & Route Enrichment"]
-        MAP["Leaflet Map\nGET /map"]
+    subgraph P5["Phase 5 — Map, Enrichment & Filtering"]
+        MAP["Leaflet Map\nGET /map\n(bunching viz, anti-flicker)"]
         ENRICH["Route Name Enrichment\nroute_long_name"]
+        FILTER["Live Window Filter\n3-min cutoff on /v1/status/live"]
     end
 
     subgraph P6["Phase 6 — Production Hardening"]
@@ -466,6 +482,7 @@ flowchart TD
     API --> DEMO
     API --> MAP
     ENRICH --> DEVIATIONS
+    FILTER --> API
     P1 -.-> CI
     P2 -.-> CI
     P3 -.-> CI
