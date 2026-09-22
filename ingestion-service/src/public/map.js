@@ -156,10 +156,26 @@ async function refresh() {
         const data = await resp.json();
 
         // Build a vehicle_id -> [lat, lon] index from deviations that
-        // have location data.  This lets us place bunching markers at
-        // the last known positions of the bunched vehicles.
-        const vehiclePositions = {};
+        // have location data.  When a vehicle has multiple deviation
+        // documents (one per stop it visited), keep only the most recent
+        // one that's where the vehicle actually is right now
+        const latestByVehicle = {};
         for (const d of data.delays) {
+            const vid = d.vehicle_id;
+            if (!latestByVehicle[vid]) {
+                latestByVehicle[vid] = d;
+            } else {
+                const existing = latestByVehicle[vid];
+                if (new Date(d.actual_at) > new Date(existing.actual_at)) {
+                    latestByVehicle[vid] = d;
+                }
+            }
+        }
+
+        const uniqueDelays = Object.values(latestByVehicle);
+
+        const vehiclePositions = {};
+        for (const d of uniqueDelays) {
             if (d.location && d.location.coordinates) {
                 const [lon, lat] = d.location.coordinates;
                 vehiclePositions[d.vehicle_id] = [lat, lon];
@@ -168,8 +184,7 @@ async function refresh() {
 
         const seenDelays = new Set();
 
-        // Each d of the response is a vehicle experimenting an anomaly
-        for (const d of data.delays) {
+        for (const d of uniqueDelays) {
             if (!d.location || !d.location.coordinates) continue;
             const key = delayMarkerKey(d);
             seenDelays.add(key);
@@ -316,7 +331,7 @@ async function refresh() {
         const generated = lastRefreshTime.toLocaleTimeString();
         statsEl.innerHTML = `
             <strong>MBTA Live</strong><br>
-            ${data.meta.delay_count} deviations<br>
+            ${uniqueDelays.length} vehicles with deviations<br>
             ${data.meta.bunching_count} bunching events<br>
             <small>Updated: ${generated}</small><br>
             <small id="data-age"></small>
