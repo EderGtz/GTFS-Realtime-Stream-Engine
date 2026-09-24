@@ -1,12 +1,12 @@
 # GTFS Realtime Stream Engine
 
-An event-driven pipeline that ingests, processes, and analyzes real-time public transit telemetry.
+An event-driven pipeline that ingests, processes, and analyzes public transit telemetry.
 
 ## Why This Project Exists
 
-Most "real-time transit dashboard" projects call a pre-digested status API (like the ones provided by Transport For London or Bay Area Rapid Transit) and render it on a map. This one doesn't. It ingests **raw binary GTFS-Realtime feeds** (the actual protobuf format transit agencies publish), decouples ingestion from processing with **Kafka**, and computes its own delay and bunching metrics instead of trusting someone else's summary.
+Many transit dashboard projects consume a pre-processed status API provided by the transit agency and render it directly, which gets working software in front of users quickly. This project takes a different path: it ingests **raw binary GTFS-Realtime feeds** (the Protobuf format transit agencies publish), decouples ingestion from processing with **Kafka**, and computes its own delay and bunching metrics. The goal is to demonstrate the full event-driven pipeline: ingestion, streaming, analytics, serving; rather than the visualization layer.
 
-The goal is to build a real, working end-to-end event-driven system using real public data instead of mocked data — and to have something that actually runs continuously and produces real numbers. The pipeline itself (ingestion → streaming → analytics → API) is the core product. A `curl`/terminal demo proves the pipeline works; a lightweight Leaflet map served from the same Express server proves the data is useful.
+The pipeline itself is the core product. It runs continuously against live MBTA data and produces real metrics. A Leaflet map served from the same Express server shows the data in context, and a `curl`/terminal demo proves the API works. The data refreshes every ~30 seconds.
 
 ## Architecture Overview
 
@@ -46,9 +46,9 @@ The goal is to build a real, working end-to-end event-driven system using real p
         │  - Serves computed delays & analytics          │
         │  - GET /v1/status/live                         │
         └────────────────────────────────────────────────┘
-                                  │
-                          (curl / terminal demo —
-                           no frontend in this MVP)
+                                 │
+                         (Leaflet map at /map
+                          + curl / terminal demo)
 ```
 
 The GTFS-Realtime Stream Engine is a decoupled, event-driven pipeline designed to ingest, process, and serve public transit telemetry at scale. The architecture is divided into five distinct layers:
@@ -240,6 +240,8 @@ These improvements are done before deployment (Phase 6) so the system ships with
 
 **Step 5 — Frontend shape fixture tests.** A dedicated test file (`tests/api/map.test.ts`) builds a realistic API fixture and verifies the response shape matches what `map.js` consumes: every field the popup formatters read, valid GeoJSON coordinates, ISO 8601 timestamps, deviation color thresholds, and the bunching-vehicle cross-reference (matching `vehicle_a`/`vehicle_b` back to deviation locations). This catches API shape drift without needing a headless browser.
 
+**Step 6 — Info panel.** A "?" button in the top-left corner of the map toggles a brief explanation panel for visitors. It describes what the markers mean, explains that the deviation/bunching counts represent events over a 3-minute window (not instantaneous), documents a known limitation where bunching markers may show only one vehicle (positions derived from the deviation list), and shows the data pipeline flow (MBTA feed → Ingestion → Kafka → Analytics → MongoDB → Map).
+
 **Acceptance criteria:**
 - [x] `GET /v1/status/live` returns `route_long_name` alongside `route_id`
 - [x] `GET /v1/status/live` filters out data older than 3 minutes
@@ -343,7 +345,9 @@ gtfs-realtime-stream-engine/
 │   │   │
 │   │   ├── public/                   # Phase 5 — static files served by Express
 │   │   │   ├── map.html              # Leaflet map page (OSM tiles, deviation markers)
-│   │   │   └── map.js                # Map logic: fetch /v1/status/live, render markers
+│   │   │   ├── map.js                # Map logic: fetch /v1/status/live, render markers
+│   │   │   ├── map-logic.js          # Pure data functions (testable, no DOM)
+│   │   │   └── info-toggle.js        # "?" info panel toggle (CSP-safe, no inline script)
 │   │   │
 │   │   └── utils/
 │   │       └── logger.ts           # Structured logging (poll failures, decode errors)
@@ -406,6 +410,7 @@ gtfs-realtime-stream-engine/
 │   ├── guarantees.md               # System guarantees: delivery, persistence, ordering
 │   ├── analyticsEngineProcessingCycle.md  # How the consumer processes pings into metrics
 │   ├── kafkaIntegrationTestExplanation.md # testcontainers readiness-gate strategy
+│   ├── number-flow-explained.md    # Why ingestion/analytics/map show different counts
 │   └── img/
 │       ├── phase1_demo.gif         # Phase 1 live ingestion demo
 │       ├── phase1_mongo.png        # Phase 1 MongoDB view
@@ -515,9 +520,9 @@ Messages published to the `raw.vehicle-positions` topic are partitioned by the `
 
 Even though the MVP runs on a single Kafka broker, the topic is initialized with 4 partitions. This decision ensures the architecture is already prepared to grow. When horizontal scalability is needed, new analytics consumers can be added to the consumer group, and Kafka will automatically rebalance the partitions across the new instances without requiring a topic recreation or downtime.
 
-### Why use different Consumer Groups (e.g., Analytics and Alerting/Debug)?
+### Why use different Consumer Groups (e.g., Analytics and Archive)?
 
-Utilizing distinct consumer groups demonstrates that Kafka truly decouples consumers. By assigning the Python analytics engine to one group and an alerting/debug service to another, they process the exact same event stream completely independently. You can shut down the Analytics consumer and the Debug consumer will continue working uninterrupted.
+Utilizing distinct consumer groups demonstrates that Kafka truly decouples consumers. The Python analytics engine runs under `analytics-group`; the planned archive consumer would run under `archive-group`; and the planned live-feed consumer would run under `live-api-group`. Each processes the same event stream completely independently. You can shut down the analytics consumer and the archive consumer continues recording uninterrupted. Each group maintains its own offset, so one consumer's restart doesn't affect the others.
 
 ### Why use KRaft instead of ZooKeeper?
 
