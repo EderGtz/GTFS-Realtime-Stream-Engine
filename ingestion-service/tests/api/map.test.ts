@@ -80,6 +80,25 @@ describe('GET /map', () => {
         expect(res.headers['content-type']).toMatch(/javascript/);
         expect(res.text).toContain('/v1/status/live');
     });
+
+    test('map.html contains info toggle button and panel', async () => {
+        const app = createApp();
+        const res = await request(app).get('/map');
+
+        expect(res.text).toContain('id="info-toggle"');
+        expect(res.text).toContain('id="info-panel"');
+        expect(res.text).toContain('What are you looking at?');
+        expect(res.text).toContain('info-toggle.js');
+    });
+
+    test('serves info-toggle.js as static file', async () => {
+        const app = createApp();
+        const res = await request(app).get('/info-toggle.js');
+
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toMatch(/javascript/);
+        expect(res.text).toContain('info-toggle');
+    });
 });
 
 // --- Frontend shape fixture tests --------------------------------------

@@ -31,6 +31,32 @@
         }
         #stats .stale { color: #e74c3c; font-weight: bold; }
         #stats .fresh { color: #27ae60; }
+        #info-toggle {
+            position: absolute; top: 90px; left: 10px; z-index: 1000;
+            width: 32px; height: 32px; border-radius: 50%;
+            background: white; border: none; cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            font-size: 16px; font-weight: bold; color: #555;
+            display: flex; align-items: center; justify-content: center;
+            transition: background 0.15s, color 0.15s;
+        }
+        #info-toggle:hover { background: #f0f0f0; color: #222; }
+        #info-toggle.active { background: #333; color: #fff; }
+        #info-panel {
+            position: absolute; top: 130px; left: 10px; z-index: 1000;
+            background: white; padding: 16px 18px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.25); font-size: 13px;
+            line-height: 1.55; max-width: 340px; color: #333;
+            display: none;
+        }
+        #info-panel h3 { margin: 0 0 10px 0; font-size: 14px; color: #111; }
+        #info-panel p { margin: 0 0 10px 0; }
+        #info-panel p:last-child { margin-bottom: 0; }
+        #info-panel .flow-step {
+            display: inline-block; background: #f5f5f5; border-radius: 4px;
+            padding: 1px 6px; font-size: 12px; white-space: nowrap;
+        }
+        #info-panel .flow-arrow { color: #aaa; margin: 0 2px; }
     </style>
 </head>
 <body>
@@ -46,8 +72,48 @@
         <div><span class="dot" style="background:#9b59b6; border: 2px solid #6c3483; width:10px; height:10px;"></span> Bunching vehicle</div>
         <div><span class="line" style="background:#9b59b6"></span> Bunching link</div>
     </div>
+    <button id="info-toggle" title="What is this?">?</button>
+    <div id="info-panel">
+        <h3>What are you looking at?</h3>
+        <p>This map shows <strong>MBTA bus positions</strong>
+        across Boston, refreshed every 30 seconds.</p>
+
+        <p><strong>Colored markers</strong> are buses running ahead or behind
+        schedule. Green means on time. Red means very late. The marker
+        grows with severity.</p>
+
+        <p><strong>Purple pairs</strong> are <em>bunching events</em> — two
+        buses on the same route that are too close together (within 100m),
+        which means service gaps for riders behind them.</p>
+
+        <p style="margin-top: 8px; font-size: 12px; color: #666;">
+            <strong style="color: #444;">What the numbers mean:</strong><br>
+            The stats panel (top-right) shows deviation and bunching counts.
+            These are <em>not</em> instantaneous. They represent
+            events that occurred in the last 3 minutes. For example,
+            400 deviations means 400 bus arrivals were ahead or behind
+            schedule in that window, not that 400 buses are late right now.
+            Some of those buses may already be back on time.
+        </p>
+
+        <p style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; font-size: 12px; color: #666;">
+            <strong style="color: #444;">How the data gets here:</strong><br>
+            <span class="flow-step">MBTA feed</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step">Ingestion</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step">Kafka</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step">Analytics</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step">MongoDB</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step">This map</span>
+        </p>
+    </div>
     <div id="stats">Loading...</div>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module" src="/map.js"></script>
+    <script src="/info-toggle.js"></script>
 </body>
 </html>
