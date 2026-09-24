@@ -84,7 +84,16 @@
 
         <p><strong>Purple pairs</strong> are <em>bunching events</em> — two
         buses on the same route that are too close together (within 100m),
-        which means service gaps for riders behind them.</p>
+        which means service gaps for riders behind them.
+        <span style="font-size: 11px; color: #888;">*</span></p>
+
+        <p style="margin-top: 2px; font-size: 11px; color: #888;">
+            * A bunching event may show only one purple marker instead of
+            two. This happens because vehicle positions are currently
+            derived from the deviation list: if a bunched bus is running
+            on time (no deviation), its position isn't available to draw
+            the marker. The underlying detection still works correctly.
+        </p>
 
         <p style="margin-top: 8px; font-size: 12px; color: #666;">
             <strong style="color: #444;">What the numbers mean:</strong><br>
