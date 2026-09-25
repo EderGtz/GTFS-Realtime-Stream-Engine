@@ -1,0 +1,33 @@
+# --- Build stage ---
+FROM node:24-alpine AS builder
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY tsconfig.json ./
+COPY src/ ./src/
+RUN npm run build
+
+# --- Runtime stage ---
+FROM node:24-alpine AS runtime
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+# Compiled JS output from the first stage
+COPY --from=builder /app/dist ./dist
+
+# Non-JS assets the runtime needs:
+#   proto/     — GTFS-realtime .proto (not used by the API, but the
+#                shared ingestion code imports the decoder which references it)
+#   generated/ — pre-compiled protobuf JS bindings (same reason)
+#   public/    — map HTML, CSS, JS served via express.static()
+COPY src/proto/ ./dist/proto/
+COPY src/generated/ ./dist/generated/
+COPY src/public/ ./dist/public/
+
+EXPOSE 3000
+
+CMD ["node", "dist/api/index.js"]

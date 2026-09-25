@@ -1,9 +1,17 @@
 name: GTFS-streaming
 
+x-common-env: &common-env
+  KAFKA_BROKER: kafka:29092
+  MONGO_URI: mongodb://mongodb:27017/gtfs_realtime
+  MONGO_DATABASE: gtfs_realtime
+
 services:
+  # ── Infrastructure ─────────────────────────────────────────────
+
   mongodb:
     image: mongo:latest
     container_name: gtfs_mongodb
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
     ports:
       - "127.0.0.1:${MONGO_PORT:-27017}:27017"
     volumes:
@@ -23,36 +31,31 @@ services:
     ports:
       - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
     environment:
-      # Kraft settings 
+      KAFKA_HEAP_OPTS: "-Xmx256m -Xms256m"
+      # KRaft settings
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       CLUSTER_ID: X6usq6R5hRCVdeDrtTtSoQ
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-
-      #Listeners
+      # Listeners
       KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:29093,PLAINTEXT_HOST://:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://127.0.0.1:${KAFKA_PORT:-9092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-
       # Topics and replication
       KAFKA_NUM_PARTITIONS: 4
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-      
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_MIN_INSYNC_REPLICAS: 1
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-
       KAFKA_LOG_RETENTION_HOURS: 72
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
       KAFKA_DELETE_TOPIC_ENABLE: "true"
-    
     volumes:
       - kafka_data:/var/lib/kafka/data
-
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
       interval: 10s
@@ -70,6 +73,57 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
     depends_on:
       kafka:
+        condition: service_healthy
+
+  # ── Application services ───────────────────────────────────────
+  #
+  # Locally: docker compose up mongodb kafka and run ingestion + analytics on the host.
+  # On server: docker compose up -d.
+
+  ingestion:
+    build:
+      context: ./ingestion-service
+      dockerfile: Dockerfile
+    container_name: gtfs_ingestion
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ./ingestion-service
+      dockerfile: Dockerfile.api
+    container_name: gtfs_api
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:3000:3000"
+    environment:
+      <<: *common-env
+      API_PORT: "3000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  analytics:
+    build:
+      context: ./analytics-engine
+      dockerfile: Dockerfile
+    container_name: gtfs_analytics
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_TOPIC: raw.vehicle-positions
+      KAFKA_GROUP_ID: analytics-engine
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
         condition: service_healthy
 
 volumes:

@@ -1,0 +1,11 @@
+.venv
+.env
+.env.*
+tests
+.git
+.vscode
+data/MBTA_GTFS
+__pycache__
+.pytest_cache
+.ruff_cache
+notebooks
