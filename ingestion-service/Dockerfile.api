@@ -11,8 +11,8 @@ COPY src/ ./src/
 RUN npm run generate:types
 RUN npm run build
 
-RUN cp -r src/proto dist/proto
-RUN cp -r src/generated dist/generated
+RUN cp -r src/proto dist/src/proto
+RUN cp -r src/generated dist/src/generated
 
 # --- Runtime stage ---
 FROM node:24-alpine AS runtime
@@ -24,8 +24,8 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 
 # Static map files (HTML, CSS, JS) served via express.static()
-COPY src/public/ ./dist/public/
+COPY src/public/ ./dist/src/public/
 
 EXPOSE 3000
 
-CMD ["node", "dist/api/index.js"]
+CMD ["node", "dist/src/api/index.js"]

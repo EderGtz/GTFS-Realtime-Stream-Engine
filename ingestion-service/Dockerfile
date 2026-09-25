@@ -11,8 +11,12 @@ COPY src/ ./src/
 RUN npm run generate:types
 RUN npm run build
 
-RUN cp -r src/proto dist/proto
-RUN cp -r src/generated dist/generated
+# Stage non-JS assets into the dist tree so the runtime stage only
+# needs one COPY.  Because tsconfig has rootDir: ".", tsc emits to
+# dist/src/, not dist/ — proto and generated go alongside the compiled
+# output at dist/src/proto/ and dist/src/generated/.
+RUN cp -r src/proto dist/src/proto
+RUN cp -r src/generated dist/src/generated
 
 # --- Runtime stage ---
 FROM node:24-alpine AS runtime
@@ -23,4 +27,4 @@ RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/src/index.js"]
