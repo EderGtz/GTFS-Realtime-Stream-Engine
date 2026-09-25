@@ -18,18 +18,20 @@ export function createApp(collections?: ApiCollections): express.Express {
     const app = express();
 
     app.use(helmet({
+        hsts: false,
         contentSecurityPolicy: {
             directives: {
                 defaultSrc: ["'self'"],
                 scriptSrc: ["'self'", "unpkg.com"],
                 styleSrc: ["'self'", "unpkg.com", "'unsafe-inline'"],
                 imgSrc: [
-                    "'self'", 
-                    "data:", 
-                    "tile.openstreetmap.org", 
+                    "'self'",
+                    "data:",
+                    "tile.openstreetmap.org",
                     "*.tile.openstreetmap.org"
                 ],
                 connectSrc: ["'self'"],
+                upgradeInsecureRequests: null,
             },
         },
         referrerPolicy: {
