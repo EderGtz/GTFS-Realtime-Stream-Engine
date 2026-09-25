@@ -26,6 +26,8 @@ COPY --from=builder /app/dist ./dist
 # Static map files (HTML, CSS, JS) served via express.static()
 COPY src/public/ ./dist/src/public/
 
+ENV NODE_ENV=production
+
 EXPOSE 3000
 
 CMD ["node", "dist/src/api/index.js"]

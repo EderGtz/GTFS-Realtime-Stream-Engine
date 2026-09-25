@@ -1,17 +1,21 @@
 import pino from 'pino';
 
-const targets: pino.TransportTargetOptions[] = [
-    {
+const isProd = process.env.NODE_ENV === 'production';
+
+const targets: pino.TransportTargetOptions[] = [];
+
+if (!isProd) {
+    targets.push({
         target: 'pino-pretty',
         options: {
             colorize: true,
             translateTime: 'SYS:standard',
             destination: 1
         }
-    }
-];
+    });
+}
 
-if (process.env.NODE_ENV !== 'test') {
+if (!isProd) {
     targets.push({
         target: 'pino-roll',
         options: {
