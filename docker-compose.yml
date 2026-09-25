@@ -9,7 +9,7 @@ services:
   # ── Infrastructure ─────────────────────────────────────────────
 
   mongodb:
-    image: mongo:latest
+    image: mongo:7.0
     container_name: gtfs_mongodb
     command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
     ports:
