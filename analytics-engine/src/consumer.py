@@ -70,6 +70,7 @@ incident-fraction threshold), rather than just treated it as a final decition.
 """
 from __future__ import annotations
 
+import gc
 import json
 import random
 import time
@@ -449,6 +450,7 @@ class AnalyticsConsumer:
             )
 
         scoped = pings[pings["stop_id"].notna()].copy()  # notebook 02, Section C
+        close_pairs = pd.DataFrame()
 
         try:
             close_pairs = find_close_pairs(pings, self.static_data.direction_lookup)
@@ -505,13 +507,21 @@ class AnalyticsConsumer:
             logger.exception("Schedule-deviation computation failed for this window, skipping it.")
             new_deviations = []
 
-        return self.on_window_result(
+        result = self.on_window_result(
             WindowResult(
-                bunching_actions=bunching_actions, 
+                bunching_actions=bunching_actions,
                 new_deviations=new_deviations,
                 total_records=total_records,
                 )
             )
+
+        # Explicit DataFrame cleanup. CPython's refcount GC handles most
+        # of this, but pandas internals can create reference cycles that
+        # delay collection.
+        del pings, scoped, close_pairs
+        gc.collect()
+
+        return result
 
     def run(self) -> None:
         self.consumer.subscribe([self.topic])
@@ -551,10 +561,12 @@ class AnalyticsConsumer:
 
                     if self._in_backoff():
                         logger.debug("In backoff, skipping persist attempt.")
+                        del window_pings
                         last_window_flush = time.time()
                         continue
 
                     persist_result = self._process_window(window_pings)
+                    del window_pings
 
                     if persist_result is not None:
                         if persist_result.get("success"):
