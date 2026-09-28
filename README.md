@@ -280,6 +280,7 @@ These improvements are done before deployment (Phase 6) so the system ships with
 *Leaflet map showing deviation markers (colored by severity) and bunching events (purple markers) on a map of Boston. The stats panel displays live counts and a data-age indicator. Clicking a deviation marker shows the route name, vehicle ID, and deviation. Clicking a bunching marker shows a table with route, vehicles, minimum distance, and duration.*
 
 ![Bunching Cascade / Platooning](docs/img/phase5_three_buses_bunching.png)
+
 *A real "platooning" edge case captured live in Boston. Three consecutive buses on the same route triggered the bunching threshold.*
 
 **Why this image matters architecturally:** 
@@ -312,7 +313,7 @@ Notice that the map draws a connection from Bus A to Bus B, and Bus B to Bus C, 
 
 #### Live Demo
 
-![Phase 6 terminal](docs/img/phase6_ssh)
+![Phase 6 terminal](docs/img/phase6_ssh.png)
 *Terminal showing docker stats*
 
 ## Known Limitations
