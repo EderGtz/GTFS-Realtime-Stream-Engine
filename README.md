@@ -1,12 +1,35 @@
 # GTFS Realtime Stream Engine
 
-An event-driven pipeline that ingests, processes, and analyzes public transit telemetry.
+An event-driven pipeline that ingests, processes, and analyzes public transit telemetry. Deployed and running live at `http://157.90.113.98:3000/map`.
 
 ## Why This Project Exists
 
 Many transit dashboard projects consume a pre-processed status API provided by the transit agency and render it directly, which gets working software in front of users quickly. This project takes a different path: it ingests **raw binary GTFS-Realtime feeds** (the Protobuf format transit agencies publish), decouples ingestion from processing with **Kafka**, and computes its own delay and bunching metrics. The goal is to demonstrate the full event-driven pipeline: ingestion, streaming, analytics, serving; rather than the visualization layer.
 
 The pipeline itself is the core product. It runs continuously against live MBTA data and produces real metrics. A Leaflet map served from the same Express server shows the data in context, and a `curl`/terminal demo proves the API works. The data refreshes every ~30 seconds.
+
+## Live Deployment
+
+The full stack is deployed on a Hetzner CX23 (2 vCPU, 4GB RAM, €4.49/mo) running six containers via Docker Compose. The pipeline has been running unattended since 2026-09-25.
+
+**Access:**
+- Map: http://157.90.113.98:3000/map
+- API: http://157.90.113.98:3000/v1/status/live
+
+**Observed steady-state resource usage:**
+
+| Container     | RAM      | CPU    |
+|---------------|----------|--------|
+| analytics     | ~1.6 GB  | 0.13%  |
+| kafka         | ~460 MB  | 127%   |
+| kafkabat-ui   | ~370 MB  | 0.03%  |
+| mongodb       | ~370 MB  | 1.03%  |
+| ingestion     | ~65 MB   | 4.55%  |
+| api           | ~69 MB   | 0.14%  |
+
+Kafka's high CPU is expected — the JVM reports total CPU across all threads, not per-core usage. MongoDB's I/O reflects the 72-hour retention window and the upsert-heavy write pattern.
+
+For the full deployment runbook, see `docs/phase6-deployment-guide.md`.
 
 ## Architecture Overview
 
@@ -68,7 +91,7 @@ The GTFS-Realtime Stream Engine is a decoupled, event-driven pipeline designed t
 | Analytics Engine | Python 3.12+, `confluent-kafka`, `pandas`, `numpy` | Join real-time pings against static schedule data, compute delay/bunching, explore the data before finalizing metrics |
 | Data Store | MongoDB | Bunching events and schedule deviations persisted via idempotent upserts; `2dsphere` geospatial index on deviation locations |
 | Serving API | TypeScript, Node.js, Express | REST endpoint exposing computed metrics |
-| Runtime | Docker Compose, small VPS/cloud VM | Full stack running continuously to test the code working in production |
+| Runtime | Docker Compose, Hetzner CX23 VPS | Full stack running 24/7 on a single server |
 
 ## MVP Scope — What v1 Will Actually Cover
 
@@ -256,22 +279,41 @@ These improvements are done before deployment (Phase 6) so the system ships with
 ![Phase 5 Leaflet Map](docs/img/phase5_map.png)
 *Leaflet map showing deviation markers (colored by severity) and bunching events (purple markers) on a map of Boston. The stats panel displays live counts and a data-age indicator. Clicking a deviation marker shows the route name, vehicle ID, and deviation. Clicking a bunching marker shows a table with route, vehicles, minimum distance, and duration.*
 
-### Phase 6 — Production Hardening & 24/7 Runtime (final step)
+![Bunching Cascade / Platooning](docs/img/phase5_three_buses_bunching.png)
+*A real "platooning" edge case captured live in Boston. Three consecutive buses on the same route triggered the bunching threshold.*
 
-**Goal: stop running this project on a laptop. Deploy it somewhere that stays up, and let it actually collect real history.**
+**Why this image matters architecturally:** 
 
-Everything before this phase can be developed and demoed locally, but "let it run and collect history" needs somewhere to actually run continuously.
+Notice that the map draws a connection from Bus A to Bus B, and Bus B to Bus C, but **does not** connect A directly to C. This visually proves the Phase 3 Analytics Engine is working exactly as designed:
 
-- **Deployment target:** a small VPS or free-tier cloud VM, running the full stack (ingestion, Kafka, analytics engine, MongoDB, API) via Docker Compose. 
-- **CI/CD close-out:** by this point CI (started in Phase 1) should be running the full test suite from every phase on every push.
-- **Containerization:**  extending it to build and push Docker images automatically so deployment is a `docker compose pull && up` away, not a manual rebuild.
-- **Let it run.** Once deployed, leave it running for a sustained period so the "Where the Data Could Go From Here" ideas below have something real to eventually build on, and so this README's numbers (uptime, records processed, delays observed) can be reported as real measured results instead of hypothetical ones.
+1. **Logical over Physical:** The engine doesn't just run an expensive "all-to-all" spatial proximity check. It joins real-time pings against the GTFS-static schedule and strictly evaluates proximity only between **consecutive vehicles**.
+2. **Mathematical Boundaries:** Even if Bus A and Bus C physically overlap in the real world due to traffic chaos, the engine knows Bus B is logically between them. It correctly emits two independent bunching events (A+B and B+C) rather than a useless web of connections.
+
+### Phase 6 — Production Deployment (completed 2026-09-25)
+
+**Goal: Deploy the project somewhere that stays up, and let it actually collect real history.**
+
+**Infrastructure:** Hetzner CX23 (2 vCPU, 4GB RAM, €4.49/mo), Ubuntu 24.04 LTS, Docker Compose.
+
+**What was built:**
+- Three Dockerfiles with multi-stage builds: `ingestion-service/Dockerfile` (poller), `ingestion-service/Dockerfile.api` (API + map), `analytics-engine/Dockerfile` (analytics). The Node.js images generate protobuf bindings during build (the `src/generated/` directory is gitignored). The Python image uses `uv` with `--no-install-project` for dependency layer caching.
+- `docker-compose.yml` expanded with all six services: MongoDB (pinned to 7.0 for kernel 6.19 compat), Kafka (KRaft, heap capped at 256MB), Kafka UI, ingestion, API, and analytics. Shared environment via YAML anchor (`x-common-env`). Ports: Kafka/MongoDB/Kafka UI on `127.0.0.1`, API on `0.0.0.0:3000`.
+- Resource limits: Kafka JVM heap at 256MB, MongoDB WiredTiger cache at 256MB. Total observed footprint: ~2.8GB of 3.7GB available.
+- UFW firewall: only SSH (22) and API (3000) open.
+- `restart: unless-stopped` on all application services with `depends_on: condition: service_healthy` for startup ordering.
+
+**Full deployment runbook:** `docs/phase6-deployment-guide.md`
 
 **Acceptance criteria:**
-- [ ] Full stack deployed via Docker Compose on a VPS/cloud VM, not running locally
-- [ ] Pipeline has run continuously and unattended for at least several consecutive days
-- [ ] CI runs the complete test suite (all phases) on every push
-- [ ] This README's Status section is updated with real numbers: uptime achieved, records processed, and a GIF demo
+- [x] Full stack deployed via Docker Compose on a VPS (Hetzner CX23)
+- [x] Pipeline running continuously and unattended since 2026-09-25
+- [x] CI runs the complete test suite (all phases) on every push
+- [x] README updated with live deployment info and real resource numbers
+
+#### Live Demo
+
+![Phase 6 terminal](docs/img/phase6_ssh)
+*Terminal showing docker stats*
 
 ## Known Limitations
 
@@ -306,12 +348,15 @@ Two independent services connected by Kafka — not a single app, and not per-ag
 
 ```
 gtfs-realtime-stream-engine/
-├── docker-compose.yml            # Kafka, MongoDB
+├── docker-compose.yml            # Full stack: Kafka, MongoDB, ingestion, API, analytics
 ├── README.md
 │
 ├── ingestion-service/             # Phases 1, 2, 4, 5 — TypeScript
 │   ├── package.json
 │   ├── tsconfig.json
+│   ├── Dockerfile                # Multi-stage: poller (dist/src/index.js)
+│   ├── Dockerfile.api            # Multi-stage: API + static map files
+│   ├── .dockerignore
 │   ├── .env                       # MBTA_API_KEY, MongoDB URI, Kafka broker (gitignored)
 │   ├── src/
 │   │   ├── index.ts                # Entry point: starts poller + Express API
@@ -362,13 +407,16 @@ gtfs-realtime-stream-engine/
 │       ├── api/
 │       │   ├── health.test.ts      # Phase 4 — health check tests
 │       │   ├── status.test.ts      # Phase 4/5 — response shape, filtering, error handling
-│       │   └── map.test.ts         # Phase 5 — static file serving, frontend shape fixture
+│       │   ├── map.test.ts         # Phase 5 — static file serving, frontend shape fixture
+│       │   └── map-logic.test.ts   # Phase 5 — map-logic.js pure functions (50 tests)
 │       └── integration/
 │           ├── kafka.test.ts       # Phase 2 — Kafka roundtrip (testcontainers)
 │           └── api.test.ts         # Phase 4 — endpoint + MongoDB (testcontainers)
 │
 ├── analytics-engine/               # Phases 3, 5 — Python
 │   ├── pyproject.toml
+│   ├── Dockerfile                # Python 3.12-slim + uv, two-phase dep install
+│   ├── .dockerignore
 │   ├── .env                        # Mongo URI, Kafka broker (gitignored)
 │   ├── src/
 │   │   ├── main.py                 # Entry point: wires config, writer, consumer, graceful shutdown
@@ -407,6 +455,7 @@ gtfs-realtime-stream-engine/
 │       └── test_integration.py     # Kafka + MongoDB via testcontainers
 │
 ├── docs/
+│   ├── phase6-deployment-guide.md  # Production deployment runbook
 │   ├── guarantees.md               # System guarantees: delivery, persistence, ordering
 │   ├── analyticsEngineProcessingCycle.md  # How the consumer processes pings into metrics
 │   ├── kafkaIntegrationTestExplanation.md # testcontainers readiness-gate strategy
@@ -471,8 +520,8 @@ flowchart TD
         FILTER["Live Window Filter\n3-min cutoff on /v1/status/live"]
     end
 
-    subgraph P6["Phase 6 — Production Hardening"]
-        DEPLOY["Docker Compose\non VPS / cloud VM\nrunning 24/7"]
+    subgraph P6["Phase 6 — Production Deployment"]
+        DEPLOY["Docker Compose\nHetzner CX23\nrunning 24/7"]
         CI["CI: full test suite\non every push"]
     end
 
