@@ -197,3 +197,153 @@ describe('API Integration: rate limiting', () => {
         expect(limited.body.error).toMatch(/too many requests/i);
     });
 });
+
+// Route Performance Endpoint Integration Tests
+
+describeIfDocker('API Integration: /v1/routes/:id/performance', () => {
+    let container: StartedTestContainer;
+    let client: MongoClient;
+    let app: Express;
+
+    beforeAll(async () => {
+        container = await new GenericContainer('mongo:7.0')
+            .withExposedPorts(27017)
+            .start();
+
+        const uri = `mongodb://${container.getHost()}:${container.getMappedPort(27017)}`;
+        client = await connectDbWithRetry(uri);
+        const db = client.db('gtfs_realtime_perf_test');
+
+        // Seed deviations for two different routes to test filtering.
+        // Route '28' gets 4 deviation documents; route '1' gets 1.
+        await db.collection(DEVIATIONS).insertMany([
+            {
+                vehicle_id: 'perf-v1', trip_id: 'perf-trip-1',
+                stop_sequence: 1, kind: 'arrival',
+                deviation_seconds: 120,  // |120| <= 180 → on time
+                scheduled_at: recentDate(90), actual_at: recentDate(30),
+                location: { type: 'Point', coordinates: [-71.05, 42.36] },
+                route_id: '28', route_long_name: 'Mattapan Station - Ruggles Station',
+            },
+            {
+                vehicle_id: 'perf-v2', trip_id: 'perf-trip-2',
+                stop_sequence: 1, kind: 'arrival',
+                deviation_seconds: 300,  // |300| > 180 → NOT on time
+                scheduled_at: recentDate(90), actual_at: recentDate(30),
+                route_id: '28', route_long_name: 'Mattapan Station - Ruggles Station',
+            },
+            {
+                vehicle_id: 'perf-v3', trip_id: 'perf-trip-3',
+                stop_sequence: 1, kind: 'arrival',
+                deviation_seconds: -60,  // |−60| <= 180 → on time
+                scheduled_at: recentDate(90), actual_at: recentDate(30),
+                route_id: '28', route_long_name: 'Mattapan Station - Ruggles Station',
+            },
+            {
+                vehicle_id: 'perf-v4', trip_id: 'perf-trip-4',
+                stop_sequence: 1, kind: 'departure',
+                deviation_seconds: 450,  // |450| > 180 → NOT on time
+                scheduled_at: recentDate(90), actual_at: recentDate(30),
+                route_id: '28', route_long_name: 'Mattapan Station - Ruggles Station',
+            },
+            // Different route — should NOT appear in route '28' aggregation
+            {
+                vehicle_id: 'perf-other', trip_id: 'perf-other-trip',
+                stop_sequence: 1, kind: 'arrival',
+                deviation_seconds: 999,
+                scheduled_at: recentDate(90), actual_at: recentDate(30),
+                route_id: '1', route_long_name: 'Harvard - Nubian',
+            },
+        ]);
+
+        // Seed bunching events for route '28'
+        await db.collection(BUNCHING).insertMany([
+            {
+                route_id: '28', direction_id: 0,
+                vehicle_a: 'perf-v1', vehicle_b: 'perf-v2',
+                start_time: recentDate(180), end_time: recentDate(30),
+                observation_count: 10, min_distance_meters: 15.0,
+            },
+            {
+                route_id: '28', direction_id: 1,
+                vehicle_a: 'perf-v3', vehicle_b: 'perf-v4',
+                start_time: recentDate(180), end_time: recentDate(30),
+                observation_count: 5, min_distance_meters: 8.5,
+            },
+            // Different route
+            {
+                route_id: '1', direction_id: 0,
+                vehicle_a: 'other-a', vehicle_b: 'other-b',
+                start_time: recentDate(180), end_time: recentDate(30),
+                observation_count: 3, min_distance_meters: 50.0,
+            },
+        ]);
+
+        const collections: ApiCollections = {
+            client,
+            bunching: db.collection(BUNCHING),
+            deviations: db.collection(DEVIATIONS),
+        };
+        app = createApp(collections);
+    }, 60_000);
+
+    afterAll(async () => {
+        await client?.close();
+        await container?.stop();
+    });
+
+    test('returns correct deviation stats for a specific route', async () => {
+        const res = await request(app).get('/v1/routes/28/performance');
+
+        expect(res.status).toBe(200);
+        expect(res.body.route_id).toBe('28');
+
+        const dev = res.body.deviation;
+        expect(dev.count).toBe(4);  // 4 docs with route_id '28'
+        // avg of |120|, |300|, |60|, |450| = 930/4 = 232.5 → 233
+        expect(dev.avg_seconds).toBe(233);
+        // max of |120|, |300|, |60|, |450| = 450
+        expect(dev.max_seconds).toBe(450);
+        // 2 on-time (|120| and |60| ≤ 180) out of 4 = 50%
+        expect(dev.vehicles_on_time_pct).toBe(50);
+    });
+
+    test('returns correct bunching stats for a specific route', async () => {
+        const res = await request(app).get('/v1/routes/28/performance');
+
+        const bunch = res.body.bunching;
+        expect(bunch.active_events).toBe(2);  // 2 docs with route_id '28'
+        expect(bunch.worst_distance_meters).toBeCloseTo(8.5, 1);
+    });
+
+    test('filters out other routes', async () => {
+        const res = await request(app).get('/v1/routes/1/performance');
+
+        expect(res.status).toBe(200);
+        expect(res.body.deviation.count).toBe(1);
+        expect(res.body.deviation.avg_seconds).toBe(999);
+        expect(res.body.bunching.active_events).toBe(1);
+        expect(res.body.bunching.worst_distance_meters).toBeCloseTo(50.0, 1);
+    });
+
+    test('returns zero stats for a route that does not exist', async () => {
+        const res = await request(app).get('/v1/routes/nonexistent/performance');
+
+        expect(res.status).toBe(200);
+        expect(res.body.deviation.count).toBe(0);
+        expect(res.body.deviation.avg_seconds).toBe(0);
+        expect(res.body.bunching.active_events).toBe(0);
+        expect(res.body.bunching.worst_distance_meters).toBeNull();
+    });
+
+    test('route_long_name comes from deviation documents', async () => {
+        const res = await request(app).get('/v1/routes/28/performance');
+
+        expect(res.body.route_long_name).toBe('Mattapan Station - Ruggles Station');
+    });
+
+    test('period is always "current"', async () => {
+        const res = await request(app).get('/v1/routes/28/performance');
+        expect(res.body.period).toBe('current');
+    });
+});
