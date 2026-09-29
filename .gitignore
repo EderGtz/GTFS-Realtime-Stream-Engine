@@ -2,6 +2,7 @@
 .env
 .env.*
 .vscode/
+!.env.example
 
 # Dependencies
 node_modules/

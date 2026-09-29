@@ -142,6 +142,92 @@ These are deliberate, documented tradeoffs. Detailed explanations are in [`docs/
 - **Departure deviations are disabled.** The last-STOPPED_AT heuristic was never validated against real data. Disabled pending empirical validation.
 - **No cross-document atomicity.** Bunching and deviation writes are separate `bulk_write` calls. Idempotent upserts ensure retry convergence.
 
+## How to Run
+
+### Local — Infrastructure in Docker, Services in Terminal
+
+This setup runs only Kafka and MongoDB as Docker containers, and the three application services (ingestion, API, analytics) as separate terminal processes. It's the best option for debugging: you get live logs in each terminal, can attach a debugger to any service, and restart a single service without waiting for a Docker build.
+
+**Prerequisites:** Node.js 20+, Python 3.12+, [uv](https://docs.astral.sh/uv/), Docker.
+
+**1. Start infrastructure:**
+
+```bash
+docker compose up -d mongodb kafka
+```
+
+**2. Create `.env` files** (one per service, copied from the `.env.example`
+files already in the repo):
+
+```bash
+cp ingestion-service/.env.example ingestion-service/.env
+cp analytics-engine/.env.example analytics-engine/.env
+```
+
+Both files point to `localhost` because the Docker Compose ports are
+mapped to `127.0.0.1` (MongoDB on 27017, Kafka on 9092).
+
+**3. Install dependencies:**
+
+```bash
+cd ingestion-service && npm install && cd ..
+cd analytics-engine && uv sync && cd ..
+```
+
+**4. Start each service in its own terminal:**
+
+```bash
+# Terminal 1 — Ingestion (polls MBTA feed, publishes to Kafka)
+cd ingestion-service && npm run dev
+
+# Terminal 2 — API (serves /v1/status/live and /map)
+cd ingestion-service && npm run start:api
+
+# Terminal 3 — Analytics (consumes Kafka, computes metrics, writes to MongoDB)
+cd analytics-engine && uv run python src/main.py
+```
+
+The map is at `http://localhost:3000/map` and the API at
+`http://localhost:3000/v1/status/live`.
+
+**Why this approach:** each service runs directly on the host, so changes to source code take effect on the next restart, so no Docker build step is required. If you're iterating on the analytics engine's bunching detection logic, for example, you edit the Python file, `Ctrl+C` the analytics terminal, run it again, and see the result immediately.
+
+### Local — Running as Docker Compose (all containers)
+
+If you just want to see the full stack running without touching terminals:
+
+```bash
+docker compose up -d
+```
+
+This starts all six containers (Kafka, MongoDB, Kafbat UI, ingestion, API, analytics). The map is at `http://localhost:3000/map`.
+
+**Important: after making code changes, the running containers will still be running the old code.** Docker images are built once at `up` time. If you edit source files and want the containers to pick up the changes, you must rebuild:
+
+```bash
+docker compose up -d --build
+```
+
+Without `--build`, Docker reuses the existing images and your changes are invisible.
+
+### Production Server
+
+After pushing changes to `main`, SSH in, pull, and rebuild:
+
+```bash
+cd ~/workspace/GTFS-Realtime-Stream-Engine
+git pull origin main
+docker compose up -d --build
+```
+
+`docker compose up -d` alone (without `--build`) restarts containers but keeps the old images. `--build` forces Docker to rebuild the images from the updated source before replacing the running containers.
+
+To verify the deploy worked:
+
+```bash
+curl http://localhost:3000/v1/status/live
+```
+
 ## Repository Structure
 
 ```
@@ -150,6 +236,7 @@ gtfs-realtime-stream-engine/
 ├── README.md
 │
 ├── ingestion-service/             # Phases 1, 2, 4, 5 — TypeScript
+│   ├── .env.example              # Required env vars (copy to .env)
 │   ├── Dockerfile                # Multi-stage: poller (dist/src/index.js)
 │   ├── Dockerfile.api            # Multi-stage: API + static map files
 │   ├── .dockerignore
@@ -165,6 +252,7 @@ gtfs-realtime-stream-engine/
 │   └── tests/                        # 135 tests: unit + integration (testcontainers)
 │
 ├── analytics-engine/               # Phases 3, 5 — Python
+│   ├── .env.example              # Required env vars (copy to .env)
 │   ├── Dockerfile                # Python 3.12-slim + uv, two-phase dep install
 │   ├── .dockerignore
 │   ├── src/
