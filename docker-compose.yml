@@ -25,6 +25,7 @@ services:
 
   kafka:
     image: apache/kafka:3.9.0
+    init: true
     container_name: gtfs_kafka
     hostname: kafka
     restart: unless-stopped
