@@ -49,3 +49,27 @@ export interface LiveResponse {
     bunching: BunchingEntry[];
     meta: LiveResponseMeta;
 }
+
+/** Deviation statistics for a single route within the live window. */
+export interface RouteDeviationStats {
+    count: number;
+    avg_seconds: number;
+    p95_seconds: number;
+    max_seconds: number;
+    vehicles_on_time_pct: number;
+}
+
+/** Bunching statistics for a single route within the live window. */
+export interface RouteBunchingStats {
+    active_events: number;
+    worst_distance_meters: number | null;
+}
+
+/** Full response shape for GET /v1/routes/:id/performance. */
+export interface RoutePerformanceResponse {
+    route_id: string;
+    route_long_name: string | null;
+    period: 'current';
+    deviation: RouteDeviationStats;
+    bunching: RouteBunchingStats;
+}

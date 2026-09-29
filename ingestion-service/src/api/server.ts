@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { createStatusRouter } from './routes/status.js';
+import { createRoutePerformanceRouter } from './routes/routePerformance.js';
 import { logger } from '../utils/logger.js';
 import type { ApiCollections } from '../db/connection.js';
 
@@ -64,6 +65,7 @@ export function createApp(collections?: ApiCollections): express.Express {
     // Delays route — only when MongoDB collections are available
     if (collections) {
         app.use('/v1', createStatusRouter(collections));
+        app.use('/v1', createRoutePerformanceRouter(collections));
     }
 
     app.use(errorHandler);
