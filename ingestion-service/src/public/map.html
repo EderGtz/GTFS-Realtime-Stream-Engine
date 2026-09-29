@@ -31,6 +31,66 @@
         }
         #stats .stale { color: #e74c3c; font-weight: bold; }
         #stats .fresh { color: #27ae60; }
+        #route-search-btn {
+            position: absolute; top: 130px; left: 10px; z-index: 1000;
+            width: 36px; height: 36px; border-radius: 50%;
+            background: white; border: none; cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            font-size: 18px; color: #555;
+            display: flex; align-items: center; justify-content: center;
+            transition: background 0.15s, color 0.15s;
+        }
+        #route-search-btn:hover { background: #f0f0f0; color: #222; }
+        #route-search-btn.active { background: #333; color: #fff; }
+        #route-search-panel {
+            position: absolute; top: 130px; left: 10px; z-index: 1000;
+            background: white; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+            display: none; width: 320px; overflow: hidden;
+        }
+        #route-search-panel.open { display: block; }
+        .search-header {
+            display: flex; align-items: center;
+            padding: 8px 10px; gap: 6px;
+            border-bottom: 1px solid #eee;
+        }
+        .search-header input {
+            flex: 1; border: none; outline: none;
+            font-size: 14px; padding: 6px 4px;
+            background: transparent; color: #333;
+        }
+        .search-header input::placeholder { color: #999; }
+        .search-close-btn {
+            background: none; border: none; cursor: pointer;
+            font-size: 18px; color: #888; padding: 0 4px;
+            line-height: 1;
+        }
+        .search-close-btn:hover { color: #333; }
+        #route-search-results {
+            padding: 12px 14px; font-size: 13px; line-height: 1.6;
+            display: none;
+        }
+        #route-search-results.open { display: block; }
+        #route-search-error {
+            color: #e74c3c; font-size: 13px;
+        }
+        .route-perf-title {
+            font-size: 15px; font-weight: bold; color: #111;
+            margin: 0 0 10px 0;
+        }
+        .route-perf-section {
+            margin-bottom: 10px;
+        }
+        .route-perf-section h5 {
+            margin: 0 0 4px 0; font-size: 12px; color: #888;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .route-perf-grid {
+            display: grid; grid-template-columns: 1fr 1fr;
+            gap: 2px 12px; font-size: 13px;
+        }
+        .route-perf-grid .label { color: #666; }
+        .route-perf-grid .value { font-weight: 600; color: #222; text-align: right; }
         #info-toggle {
             position: absolute; top: 90px; left: 10px; z-index: 1000;
             width: 32px; height: 32px; border-radius: 50%;
@@ -43,7 +103,7 @@
         #info-toggle:hover { background: #f0f0f0; color: #222; }
         #info-toggle.active { background: #333; color: #fff; }
         #info-panel {
-            position: absolute; top: 130px; left: 10px; z-index: 1000;
+            position: absolute; top: 174px; left: 10px; z-index: 1000;
             background: white; padding: 16px 18px; border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.25); font-size: 13px;
             line-height: 1.55; max-width: 340px; color: #333;
@@ -71,6 +131,24 @@
         <hr>
         <div><span class="dot" style="background:#9b59b6; border: 2px solid #6c3483; width:10px; height:10px;"></span> Bunching vehicle</div>
         <div><span class="line" style="background:#9b59b6"></span> Bunching link</div>
+    </div>
+    <button id="route-search-btn" title="Search route performance">&#128269;</button>
+    <div id="route-search-panel">
+        <div class="search-header">
+            <input type="text" id="route-search-input" placeholder="Route name or number (e.g. 28, Red)" autocomplete="off" spellcheck="false" />
+            <button class="search-close-btn" id="route-search-close" title="Close">&times;</button>
+        </div>
+        <div id="route-search-results"></div>
+        <div id="route-search-help" style="display:none; padding:10px 14px; font-size:12px; line-height:1.6; color:#000000; border-top:1px solid #eee;">
+            <div style="margin-bottom:6px"><strong>What these metrics mean:</strong></div>
+            <div style="margin-bottom:3px"><span style="color:#888">Vehicles tracked</span> &mdash; number of buses with recorded deviations in the last 3 minutes</div>
+            <div style="margin-bottom:3px"><span style="color:#888">Avg deviation</span> &mdash; average minutes off schedule (early or late)</div>
+            <div style="margin-bottom:3px"><span style="color:#888">P95 deviation</span> &mdash; 95% of vehicles are this late or less</div>
+            <div style="margin-bottom:3px"><span style="color:#888">Max deviation</span> &mdash; the single worst off-schedule vehicle</div>
+            <div style="margin-bottom:3px"><span style="color:#888">On time</span> &mdash; percentage of vehicles within &plusmn;3 minutes of schedule (APTA standard)</div>
+            <div style="margin-bottom:3px"><span style="color:#888">Active events</span> &mdash; bunching pairs currently detected</div>
+            <div><span style="color:#888">Closest pair</span> &mdash; minimum distance between any bunched vehicles</div>
+        </div>
     </div>
     <button id="info-toggle" title="What is this?">?</button>
     <div id="info-panel">
@@ -124,5 +202,6 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module" src="/map.js"></script>
     <script src="/info-toggle.js"></script>
+    <script src="/route-search.js"></script>
 </body>
 </html>
