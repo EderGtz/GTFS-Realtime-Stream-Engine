@@ -9,6 +9,10 @@ import {
     updateStats,
     handleRefreshError,
     startAgeTimer,
+    applyRouteFilter,
+    filterByRoute,
+    clearRouteFilter,
+    getActiveRouteFilter,
 } from './map-logic.js';
 
 const API_URL = '/v1/status/live';
@@ -36,12 +40,18 @@ async function refresh() {
 
         updateBunchingMarkers(data.bunching, positions, bunchingLayer);
 
+        applyRouteFilter();
+
         updateStats(uniqueDelays, data.meta.bunching_count);
 
     } catch (err) {
         handleRefreshError(err);
     }
 }
+
+window.filterByRoute = filterByRoute;
+window.clearRouteFilter = clearRouteFilter;
+window.getActiveRouteFilter = getActiveRouteFilter;
 
 startAgeTimer();
 refresh();

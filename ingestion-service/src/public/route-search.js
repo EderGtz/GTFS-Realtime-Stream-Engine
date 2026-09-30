@@ -27,6 +27,7 @@
         results.innerHTML = '';
         results.classList.remove('open');
         help.style.display = 'none';
+        lastSearchedData = null;
         setTimeout(function () { input.focus(); }, 50);
     }
 
@@ -141,6 +142,21 @@ html += '</div>';
         html += '<div style="font-size:11px;color:#aaa;margin-top:6px">' +
                 'Live 3-minute window &middot; ' + data.period + '</div>';
 
+        // Show on map button
+        var isActive = window.getActiveRouteFilter && window.getActiveRouteFilter() === data.route_id;
+        html += '<div style="margin-top:10px">';
+        if (isActive) {
+            html += '<button class="route-filter-btn" data-action="clear" ' +
+                'style="background:#e74c3c;color:#fff;border:none;padding:5px 12px;border-radius:4px;' +
+                'cursor:pointer;font-size:12px">Show all routes on map</button>';
+        } else {
+            html += '<button class="route-filter-btn" data-action="filter" data-route="' +
+                escapeHtml(data.route_id) + '" ' +
+                'style="background:#3498db;color:#fff;border:none;padding:5px 12px;border-radius:4px;' +
+                'cursor:pointer;font-size:12px">Show only this route on map</button>';
+        }
+        html += '</div>';
+
         results.innerHTML = html;
         results.classList.add('open');
     }
@@ -160,6 +176,8 @@ html += '</div>';
         results.innerHTML = '<div id="route-search-error">' + escapeHtml(msg) + '</div>';
         results.classList.add('open');
     }
+
+    var lastSearchedData = null;
 
     function showLoading() {
         results.innerHTML = '<div style="color:#888">Searching\u2026</div>';
@@ -188,11 +206,28 @@ html += '</div>';
                 return;
             }
             var data = await resp.json();
+            lastSearchedData = data;
             renderResults(data);
         } catch (err) {
             showError('Could not reach the server. Is the API running?');
         }
     }
+
+    // --- Filter button handler ------------------------------------------
+
+    results.addEventListener('click', function (e) {
+        if (e.target && e.target.classList.contains('route-filter-btn')) {
+            var action = e.target.getAttribute('data-action');
+            if (action === 'clear' && window.clearRouteFilter) {
+                window.clearRouteFilter();
+            } else if (action === 'filter' && window.filterByRoute) {
+                var routeId = e.target.getAttribute('data-route');
+                window.filterByRoute(routeId);
+            }
+            // Re-render to update button state
+            if (lastSearchedData) renderResults(lastSearchedData);
+        }
+    });
 
     // --- Input events ---------------------------------------------------
 

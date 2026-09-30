@@ -26,6 +26,7 @@ const bunchingCache = new Map();
 
 let lastRefreshTime = null;
 let ageTimer = null;
+let activeRouteFilter = null;  // null = show all, string = route_id to highlight
 
 // Helpers
 
@@ -173,15 +174,17 @@ function createDelayMarker(delay, position, color, popup, delayLayer) {
     .bindPopup(popup)
     .addTo(delayLayer);
 
-    return { marker, misses: 0 };
+    return { marker, misses: 0, route_id: delay.route_id || null };
 }
 
-function updateDelayMarker(cacheEntry, position, color, popup) {
+function updateDelayMarker(cacheEntry, position, color, popup, routeId) {
     const { marker } = cacheEntry;
     marker.setLatLng(position);
     marker.setStyle({ fillColor: color });
     marker.setPopupContent(popup);
-    marker.setStyle({ fillOpacity: 0.85, opacity: 1 });
+    if (routeId !== undefined) cacheEntry.route_id = routeId;
+    var dimmed = activeRouteFilter && cacheEntry.route_id !== activeRouteFilter;
+    marker.setStyle({ fillOpacity: dimmed ? FILTER_DIM_OPACITY : 0.85, opacity: dimmed ? FILTER_DIM_STROKE : 1 });
     cacheEntry.misses = 0;
 }
 
@@ -204,7 +207,7 @@ function updateDelayMarkers(delays, delayLayer) {
         const popup = formatPopup(d);
 
         if (delayCache.has(key)) {
-            updateDelayMarker(delayCache.get(key), position, color, popup);
+            updateDelayMarker(delayCache.get(key), position, color, popup, d.route_id);
         } else {
             delayCache.set(key, createDelayMarker(d, position, color, popup, delayLayer));
         }
@@ -267,26 +270,28 @@ function createBunchingEvent(bunching, positionA, positionB, popup, bunchingLaye
         .addTo(bunchingLayer);
     }
 
-    return { markers, misses: 0 };
+    return { markers, misses: 0, route_id: bunching.route_id || null };
 }
 
-function updateBunchingEvent(entry, positionA, positionB, popup) {
+function updateBunchingEvent(entry, positionA, positionB, popup, routeId) {
     const [circleA, circleB, line] = entry.markers;
+    if (routeId !== undefined) entry.route_id = routeId;
+    var dimmed = activeRouteFilter && entry.route_id !== activeRouteFilter;
 
     if (circleA && positionA) {
         circleA.setLatLng(positionA);
         circleA.setPopupContent(popup);
-        circleA.setStyle({ fillOpacity: 0.9, opacity: 1 });
+        circleA.setStyle({ fillOpacity: dimmed ? FILTER_DIM_OPACITY : 0.9, opacity: dimmed ? FILTER_DIM_STROKE : 1 });
     }
     if (circleB && positionB) {
         circleB.setLatLng(positionB);
         circleB.setPopupContent(popup);
-        circleB.setStyle({ fillOpacity: 0.9, opacity: 1 });
+        circleB.setStyle({ fillOpacity: dimmed ? FILTER_DIM_OPACITY : 0.9, opacity: dimmed ? FILTER_DIM_STROKE : 1 });
     }
     if (line && positionA && positionB) {
         line.setLatLngs([positionA, positionB]);
         line.setPopupContent(popup);
-        line.setStyle({ opacity: 0.7 });
+        line.setStyle({ opacity: dimmed ? FILTER_DIM_STROKE : 0.7 });
     }
 
     /*
@@ -313,7 +318,7 @@ function updateBunchingMarkers(bunchingEvents, vehiclePositions, bunchingLayer) 
         const popup = formatBunchingPopup(b);
 
         if (bunchingCache.has(key)) {
-            updateBunchingEvent(bunchingCache.get(key), positionA, positionB, popup);
+            updateBunchingEvent(bunchingCache.get(key), positionA, positionB, popup, b.route_id);
         } else {
             bunchingCache.set(key,
                 createBunchingEvent(b, positionA, positionB, popup, bunchingLayer)
@@ -425,6 +430,102 @@ function handleRefreshError(err) {
     }
 }
 
+// Route filter
+
+const FILTER_DIM_OPACITY = 0.12;
+const FILTER_DIM_STROKE = 0.2;
+
+/**
+ * Apply the active route filter to all delay markers.
+ * Called after every refresh cycle so new markers respect the filter.
+ */
+function applyRouteFilter() {
+    if (!activeRouteFilter) return;
+    for (const [, entry] of delayCache) {
+        if (entry.route_id === activeRouteFilter) {
+            entry.marker.setStyle({ fillOpacity: 0.85, opacity: 1 });
+        } else {
+            entry.marker.setStyle({ fillOpacity: FILTER_DIM_OPACITY, opacity: FILTER_DIM_STROKE });
+        }
+    }
+    for (const [, entry] of bunchingCache) {
+        var match = entry.route_id === activeRouteFilter;
+        for (const m of entry.markers) {
+            if (!m) continue;
+            if (m instanceof L.Polyline && !(m instanceof L.Polygon)) {
+                m.setStyle({ opacity: match ? 0.7 : FILTER_DIM_STROKE });
+            } else {
+                m.setStyle({ fillOpacity: match ? 0.9 : FILTER_DIM_OPACITY, opacity: match ? 1 : FILTER_DIM_STROKE });
+            }
+        }
+    }
+}
+
+/**
+ * Filter the map to show only markers for a specific route.
+ * Other markers are dimmed to near-invisible.
+ */
+function filterByRoute(routeId) {
+    activeRouteFilter = routeId;
+    applyRouteFilter();
+    updateFilterBanner();
+}
+
+/**
+ * Clear the route filter — show all markers at full opacity.
+ */
+function clearRouteFilter() {
+    activeRouteFilter = null;
+    for (const [, entry] of delayCache) {
+        entry.marker.setStyle({ fillOpacity: 0.85, opacity: 1 });
+    }
+    for (const [, entry] of bunchingCache) {
+        for (const m of entry.markers) {
+            if (!m) continue;
+            if (m instanceof L.Polyline && !(m instanceof L.Polygon)) {
+                m.setStyle({ opacity: 0.7 });
+            } else {
+                m.setStyle({ fillOpacity: 0.9, opacity: 1 });
+            }
+        }
+    }
+    updateFilterBanner();
+}
+
+function getActiveRouteFilter() { return activeRouteFilter; }
+
+/**
+ * Show/hide a small banner indicating an active route filter.
+ * Uses addEventListener instead of inline onclick — CSP blocks inline handlers.
+ */
+function updateFilterBanner() {
+    let banner = document.getElementById('route-filter-banner');
+    if (!activeRouteFilter) {
+        if (banner) banner.style.display = 'none';
+        return;
+    }
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'route-filter-banner';
+        banner.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);' +
+            'z-index:1000;background:#333;color:#fff;padding:6px 14px;border-radius:20px;' +
+            'font-size:12px;display:flex;align-items:center;gap:8px;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+        document.body.appendChild(banner);
+    }
+    // Build content without inline handlers
+    banner.textContent = '';
+    var text = document.createElement('span');
+    text.innerHTML = 'Showing route <strong>' + activeRouteFilter + '</strong> ';
+    banner.appendChild(text);
+    var closeBtn = document.createElement('button');
+    closeBtn.textContent = '\u00d7';
+    closeBtn.title = 'Show all routes';
+    closeBtn.style.cssText = 'background:none;border:none;color:#fff;cursor:pointer;font-size:14px;padding:0 2px;';
+    closeBtn.addEventListener('click', function () { clearRouteFilter(); });
+    banner.appendChild(closeBtn);
+    banner.style.display = 'flex';
+}
+
 // Exports
 
 /**
@@ -434,6 +535,7 @@ function resetState() {
     delayCache.clear();
     bunchingCache.clear();
     lastRefreshTime = null;
+    activeRouteFilter = null;
     if (ageTimer) {
         clearInterval(ageTimer);
         ageTimer = null;
@@ -489,6 +591,13 @@ export {
     startAgeTimer,
     updateStats,
     handleRefreshError,
+
+    // Route filter
+    activeRouteFilter,
+    applyRouteFilter,
+    filterByRoute,
+    clearRouteFilter,
+    getActiveRouteFilter,
 
     // Test helper
     resetState,
