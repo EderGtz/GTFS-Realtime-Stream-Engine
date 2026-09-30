@@ -17,4 +17,4 @@ RUN uv sync --frozen --no-dev
 
 RUN mkdir -p data/MBTA_GTFS
 
-CMD ["uv", "run", "--no-dev", "python3", "-m", "src.main"]
+CMD ["uv", "run", "python3", "-m", "src.main"]
