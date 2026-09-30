@@ -77,7 +77,8 @@ function formatPopup(entry) {
             <strong>Route ${routeName}</strong><br>
             Vehicle: ${entry.vehicle_id}<br>
             Status: ${dev} (${Math.round(entry.deviation_seconds)}s)<br>
-            <small>${entry.kind} at trip ${entry.trip_id || '\u2014'}</small>
+            <small>${entry.kind} at trip ${entry.trip_id || '\u2014'}</small><br>
+            <small style="color:#888">Route ID: <strong>${entry.route_id || '\u2014'}</strong> — search this in the 🔍 panel</small>
         </div>
     `;
 }
@@ -108,6 +109,10 @@ function formatBunchingPopup(entry) {
                 <tr>
                     <td style="padding:2px 8px 2px 0; color:#666">Duration</td>
                     <td style="padding:2px 0">${durLabel}</td>
+                </tr>
+                <tr>
+                    <td style="padding:2px 8px 2px 0; color:#666">Route ID</td>
+                    <td style="padding:2px 0">${entry.route_id || '\u2014'}</td>
                 </tr>
             </table>
         </div>
