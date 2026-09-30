@@ -218,6 +218,7 @@ After pushing changes to `main`, SSH in, pull, and rebuild:
 cd ~/workspace/GTFS-Realtime-Stream-Engine
 git pull origin main
 docker compose up -d --build
+docker image prune -f
 ```
 
 `docker compose up -d` alone (without `--build`) restarts containers but keeps the old images. `--build` forces Docker to rebuild the images from the updated source before replacing the running containers.
@@ -269,6 +270,7 @@ gtfs-realtime-stream-engine/
 │   ├── phases.md                 # Detailed phase documentation + ADRs
 │   ├── phase6-deployment-guide.md  # Production deployment runbook
 │   ├── guarantees.md               # System guarantees: delivery, persistence, ordering
+│   ├── multi-agency-vision.md      # Long-term: multi-agency platform + JWT
 │   └── img/                        # Demo screenshots and GIFs
 │
 └── .github/
@@ -278,3 +280,15 @@ gtfs-realtime-stream-engine/
 **Why two services and not one:** ingestion (TypeScript, I/O-bound polling) and analytics (Python, pandas/data-shape work) are genuinely different workloads decoupled by Kafka. `ingestion-service` also owns the serving API and the Leaflet map since it's the same runtime that already talks to MongoDB and Express.
 
 **Why no `adapters/` directory:** one feed, done well, is the point. If a second agency is ever added, `ingestion/poller.ts` and `decoder.ts` are the two files that would need an interface extracted — not before there's a second real implementation to justify it.
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| [`docs/phases.md`](docs/phases.md) | Detailed implementation notes, acceptance criteria, and testing breakdowns for each build phase (1–6). Also contains the Architecture Decision Records (ADRs). |
+| [`docs/phase6-deployment-guide.md`](docs/phase6-deployment-guide.md) | Production deployment runbook for the Hetzner CX23 — Docker Compose setup, resource limits, UFW firewall, issues encountered, and step-by-step deploy commands. |
+| [`docs/guarantees.md`](docs/guarantees.md) | System guarantees and documented tradeoffs — delivery semantics, persistence strategy, ordering guarantees, and what happens during failures. |
+| [`docs/analyticsEngineProcessingCycle.md`](docs/analyticsEngineProcessingCycle.md) | Explains how the analytics engine's consumer loop works — time-windowed batching, overlap strategy, commit gating, and the lifecycle of a processing window. |
+| [`docs/kafkaIntegrationTestExplanation.md`](docs/kafkaIntegrationTestExplanation.md) | How the Kafka round-trip integration test works using testcontainers — spinning up a real broker, publishing, consuming, and verifying the message in CI. |
+| [`docs/number-flow-explained.md`](docs/number-flow-explained.md) | Why the stats panel, the API response, and the map show different counts — what each number represents and where it comes from in the pipeline. |
+| [`docs/multi-agency-vision.md`](docs/multi-agency-vision.md) | Long-term vision for turning the single-MBTA pipeline into a multi-agency platform with configurable connectors. |
