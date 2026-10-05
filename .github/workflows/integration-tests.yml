@@ -19,6 +19,7 @@ jobs:
       POSTGRES_USER: gtfs
       POSTGRES_PASSWORD: gtfs
       POSTGRES_DB: gtfs_realtime
+      PG_DSN: postgresql://gtfs:gtfs@localhost:5432/gtfs_realtime
 
     steps:
       - name: Checkout repository
