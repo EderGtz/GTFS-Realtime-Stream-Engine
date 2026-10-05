@@ -2,10 +2,12 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import { join } from 'node:path';
+import type pg from 'pg';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { createStatusRouter } from './routes/status.js';
 import { createRoutePerformanceRouter } from './routes/routePerformance.js';
+import { createRouteHistoryRouter } from './routes/routeHistory.js';
 import { logger } from '../utils/logger.js';
 import type { ApiCollections } from '../db/connection.js';
 
@@ -13,9 +15,10 @@ import type { ApiCollections } from '../db/connection.js';
  * Create the Express application.
  * `collections` is optional so the app can be built without MongoDB
  * (e.g. health-check-only tests). When absent, the /v1 routes are
- * not mounted.
+ * not mounted. `pgPool` is optional for the same reason, when
+ * absent, the /v1/routes/:id/history route is not mounted.
  */
-export function createApp(collections?: ApiCollections): express.Express {
+export function createApp(collections?: ApiCollections, pgPool?: pg.Pool): express.Express {
     const app = express();
 
     app.use(helmet({
@@ -66,6 +69,11 @@ export function createApp(collections?: ApiCollections): express.Express {
     if (collections) {
         app.use('/v1', createStatusRouter(collections));
         app.use('/v1', createRoutePerformanceRouter(collections));
+    }
+
+    // History route — only when PostgreSQL pool is available
+    if (pgPool) {
+        app.use('/v1', createRouteHistoryRouter(pgPool));
     }
 
     app.use(errorHandler);

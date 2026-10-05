@@ -73,3 +73,20 @@ export interface RoutePerformanceResponse {
     deviation: RouteDeviationStats;
     bunching: RouteBunchingStats;
 }
+
+/** One hourly data point in the history trend. */
+export interface HourlyDataPoint {
+    hour: string;
+    avg_deviation: number;
+    p95_deviation: number;
+    vehicle_count: number;
+    on_time_pct: number;
+    bunching_events: number;
+}
+
+/** Full response shape for GET /v1/routes/:id/history. */
+export interface RouteHistoryResponse {
+    route_id: string;
+    days: number;
+    data_points: HourlyDataPoint[];
+}

@@ -1,13 +1,17 @@
 import { config } from '../config.js';
 import { openApiCollections } from '../db/connection.js';
+import { openPgPool } from '../db/pg-connection.js';
 import { createApp } from './server.js';
 import { logger } from '../utils/logger.js';
 
 async function bootstrap() {
     logger.info('Starting API server...');
 
-    const collections = await openApiCollections();
-    const app = createApp(collections);
+    const [collections, pgPool] = await Promise.all([
+        openApiCollections(),
+        openPgPool(),
+    ]);
+    const app = createApp(collections, pgPool);
 
     const server = app.listen(config.api.port, () => {
         logger.info('API server listening on port %d', config.api.port);
@@ -19,8 +23,10 @@ async function bootstrap() {
         logger.info({ signal }, 'Received signal, shutting down gracefully...');
         server.close(() => {
             void collections.client.close().then(() => {
-                logger.info('HTTP server and MongoDB connection closed');
-                process.exit(0);
+                void pgPool.end().then(() => {
+                    logger.info('HTTP server, MongoDB, and PostgreSQL connections closed');
+                    process.exit(0);
+                });
             });
         });
 

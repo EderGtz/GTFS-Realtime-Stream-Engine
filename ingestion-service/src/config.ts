@@ -29,6 +29,9 @@ export const config = {
         uri: envOrThrow("MONGO_URI"),
         database: envOrDefault("MONGO_DATABASE", "gtfs_realtime"),
     },
+    pg: {
+        dsn: envOrThrow("PG_DSN"),
+    },
     api: {
         port: parseInt(envOrDefault("API_PORT", "3000"), 10),
     },
