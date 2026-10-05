@@ -2,6 +2,7 @@ name: "CI: Unit Tests for ingestion service"
 env:
   KAFKA_BROKER: localhost:9092
   MONGO_URI: mongodb://localhost:27017/dummy_db
+  PG_DSN: postgresql://dummy:dummy@localhost:5432/dummy
   
 on:
   push:

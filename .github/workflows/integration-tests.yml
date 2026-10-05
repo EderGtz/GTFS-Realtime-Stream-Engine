@@ -15,6 +15,10 @@ jobs:
       KAFKA_PORT: 9092
       KAFKA_BROKER: localhost:9092
       MONGO_URI: mongodb://localhost:27017/gtfs
+      MONGO_DATABASE: gtfs_realtime
+      POSTGRES_USER: gtfs
+      POSTGRES_PASSWORD: gtfs
+      POSTGRES_DB: gtfs_realtime
 
     steps:
       - name: Checkout repository
@@ -24,7 +28,7 @@ jobs:
         run: docker compose config -q
 
       - name: Wait for Healthchecks (Kafka + Mongo)
-        run: docker compose up -d --wait
+        run: docker compose up -d --wait kafka mongodb
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
