@@ -1,9 +1,10 @@
 name: GTFS-streaming
 
 x-common-env: &common-env
-  KAFKA_BROKER: kafka:29092
-  MONGO_URI: mongodb://mongodb:27017/gtfs_realtime
-  MONGO_DATABASE: gtfs_realtime
+  KAFKA_BROKER: ${KAFKA_BROKER}
+  MONGO_URI: ${MONGO_URI}
+  MONGO_DATABASE: ${MONGO_DATABASE}
+  PG_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
 
 services:
   # ── Infrastructure ─────────────────────────────────────────────
@@ -18,6 +19,25 @@ services:
       - mongodb_data:/data/db
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: gtfs_postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PG_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -109,6 +129,8 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   analytics:
     build:
@@ -126,7 +148,10 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
 volumes:
   mongodb_data:
   kafka_data:
+  postgres_data:
