@@ -78,7 +78,7 @@ def main() -> None:
         # Feed into the hourly accumulator for PostgreSQL.
         # On hour boundary, flush aggregated stats to Postgres.
         accumulator.accumulate(result)
-        flushed = accumulator.maybe_flush(datetime.datetime.now(datetime.timezone.utc))
+        flushed = accumulator.maybe_flush(datetime.datetime.now(datetime.UTC))
         if flushed:
             pg_writer.upsert_hourly_stats(flushed)
 

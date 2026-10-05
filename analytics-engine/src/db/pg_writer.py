@@ -22,13 +22,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
-from db.pg_connection import connect_pg_with_retry
 from typing import TYPE_CHECKING
 
 import psycopg2
 from psycopg2.extensions import connection as PgConnection
 from psycopg2.extras import execute_values
 
+from db.pg_connection import connect_pg_with_retry
 from db.pg_schema import (
     ROUTE_HOURLY_STATS_DDL,
     ROUTE_HOURLY_STATS_INDEX_DDL,
