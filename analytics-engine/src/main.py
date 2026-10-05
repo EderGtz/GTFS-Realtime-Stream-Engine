@@ -33,11 +33,13 @@ flows through the exact same, already-tested shutdown path, deliberately minimal
 rather than adding a stop-flag to AnalyticsConsumer's loop itself.
 """
 
+import datetime
 import signal
 import sys
 
 from config import AppConfig
 from consumer import AnalyticsConsumer, WindowResult, download_and_extract_gtfs
+from db.pg_writer import HourlyAccumulator, PgWriter
 from db.writer import MetricsWriter, PersistWindowResult
 from utils.logger import get_logger
 
@@ -61,6 +63,8 @@ def main() -> None:
     download_and_extract_gtfs()
 
     writer = MetricsWriter(mongo_uri=config.mongo_uri)
+    pg_writer = PgWriter(dsn=config.pg_dsn)
+    accumulator = HourlyAccumulator()
 
     def on_window_result(result: WindowResult) -> PersistWindowResult:
         persist_window_result = writer.persist_window(result)
@@ -70,6 +74,14 @@ def main() -> None:
             persist_window_result["bunching_written"],
             persist_window_result["deviations_written"]
         )
+
+        # Feed into the hourly accumulator for PostgreSQL.
+        # On hour boundary, flush aggregated stats to Postgres.
+        accumulator.accumulate(result)
+        flushed = accumulator.maybe_flush(datetime.datetime.now(datetime.timezone.utc))
+        if flushed:
+            pg_writer.upsert_hourly_stats(flushed)
+
         return persist_window_result
 
     kafka_config = {
@@ -96,6 +108,11 @@ def main() -> None:
         logger.exception("Fatal error during execution. Exiting.")
         sys.exit(1)
     finally:
+        # Flush any partial hour's data before closing.
+        flushed = accumulator.flush_remaining()
+        if flushed:
+            pg_writer.upsert_hourly_stats(flushed)
+        pg_writer.close()
         writer.close()
         logger.info("Shutdown complete. Analytics Engine stopped")
 
