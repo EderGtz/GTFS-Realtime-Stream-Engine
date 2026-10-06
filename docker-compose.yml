@@ -85,18 +85,6 @@ services:
       retries: 5
       start_period: 25s
 
-  kafkabat-ui:
-    image: ghcr.io/kafbat/kafka-ui:latest
-    container_name: kafkabat_ui
-    ports:
-      - "127.0.0.1:8080:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: GTFS Cluster
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-    depends_on:
-      kafka:
-        condition: service_healthy
-
   # ── Application services ───────────────────────────────────────
   #
   # Locally: docker compose up mongodb kafka and run ingestion + analytics on the host.
