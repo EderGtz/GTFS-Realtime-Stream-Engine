@@ -187,7 +187,6 @@ html += '</div>';
     var lastSearchedData = null;
 
     // --- Route history state ----------------------------------------------
-    var historyChart = null;
     var historyDays = 7;
     var historyOpen = false;
 
@@ -212,14 +211,6 @@ html += '</div>';
                 content.innerHTML = '<div class="history-empty">Could not load history (' +
                     escapeHtml(err.message) + ')</div>';
             });
-    }
-
-    function formatHourLabel(isoString) {
-        var d = new Date(isoString);
-        var month = d.toLocaleString('en-US', { month: 'short' });
-        var day = d.getDate();
-        var hour = d.toLocaleString('en-US', { hour: 'numeric' });
-        return month + ' ' + day + ', ' + hour;
     }
 
     function renderHistory(data) {
@@ -281,69 +272,9 @@ html += '</div>';
 
         content.innerHTML = html;
 
-        // Render chart
-        var canvas = content.querySelector('#history-chart');
-        if (canvas && window.Chart) {
-            if (historyChart) historyChart.destroy();
-            historyChart = new Chart(canvas.getContext('2d'), {
-                type: 'line',
-                data: {
-                    labels: points.map(function (p) { return formatHourLabel(p.hour); }),
-                    datasets: [{
-                        label: 'On-time %',
-                        data: points.map(function (p) { return p.on_time_pct; }),
-                        borderColor: '#3498db',
-                        backgroundColor: 'rgba(52, 152, 219, 0.1)',
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 0,
-                        pointHoverRadius: 4,
-                        borderWidth: 2,
-                    }],
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                label: function (ctx) {
-                                    var p = points[ctx.dataIndex];
-                                    return [
-                                        'On-time: ' + p.on_time_pct + '%',
-                                        'Avg dev: ' + formatSeconds(p.avg_deviation),
-                                        'P95: ' + formatSeconds(p.p95_deviation),
-                                        'Vehicles: ' + p.vehicle_count,
-                                        'Bunching: ' + p.bunching_events,
-                                    ];
-                                },
-                            },
-                        },
-                    },
-                    scales: {
-                        x: {
-                            ticks: {
-                                maxTicksLimit: 6,
-                                font: { size: 10 },
-                                color: '#999',
-                            },
-                            grid: { display: false },
-                        },
-                        y: {
-                            min: 0,
-                            max: 100,
-                            ticks: {
-                                stepSize: 25,
-                                font: { size: 10 },
-                                color: '#999',
-                                callback: function (v) { return v + '%'; },
-                            },
-                            grid: { color: '#f0f0f0' },
-                        },
-                    },
-                },
-            });
+        // Draw the chart via history-chart.js
+        if (window.drawChart) {
+            window.drawChart('history-chart', points);
         }
     }
 
