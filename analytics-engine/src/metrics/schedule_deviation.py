@@ -41,14 +41,23 @@ import pandas as pd
 AGENCY_TZ = "America/New_York"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ScheduledStopTime:
-    """One row from stop_times.txt, keyed by (trip_id, stop_sequence)."""
+    """One row from stop_times.txt, keyed by (trip_id, stop_sequence).
+
+    Times are stored as pre-parsed integer seconds-of-day (hours may exceed 24
+    for past-midnight trips), not raw "HH:MM:SS" strings. Strings are the
+    heaviest per-row value (~50+ bytes of unique text vs 28 bytes for an int)
+    and schedule_deviation.py re-parses them anyway.
+
+    slots=True eliminates the per-instance __dict__ (~100+ bytes/row saved),
+    which matters with ~1M+ instances resident in stop_times_lookup.
+    """
 
     trip_id: str
     stop_sequence: int
-    arrival_time: str | None  # raw GTFS "HH:MM:SS" text; hours may exceed 24
-    departure_time: str | None
+    arrival_time: int | None  # seconds since midnight; None = no arrival scheduled
+    departure_time: int | None  # seconds since midnight; None = no departure scheduled
     stop_id: str | None = None  # needed for location enrichment (2dsphere index)
 
 
@@ -76,19 +85,28 @@ def parse_gtfs_time_offset(time_str: str) -> timedelta:
     h, m, s = (int(part) for part in time_str.split(":"))
     return timedelta(hours=h, minutes=m, seconds=s)
 
+def gtfs_time_to_seconds(time_str: str) -> int:
+    """Parse a GTFS HH:MM:SS string (hours may exceed 24) into integer seconds-of-day.
+
+    Used by the loader to pre-parse times before storing them in ScheduledStopTime,
+    so the resident lookup structures hold compact ints instead of unique strings.
+    """
+    h, m, s = (int(part) for part in time_str.split(":"))
+    return h * 3600 + m * 60 + s
 
 def resolve_scheduled_datetime(
-    actual_eastern: pd.Timestamp, gtfs_time_str: str
+    actual_eastern: pd.Timestamp, scheduled_seconds: int
 ) -> pd.Timestamp:
     """
-    Anchor a GTFS time string to a real datetime by choosing whichever of the previous,
-    same, or next Eastern calendar day lands closest to the actual observed time.
+    Anchor a pre-parsed GTFS time (integer seconds-of-day) to a real datetime by
+    choosing whichever of the previous, same, or next Eastern calendar day lands
+    closest to the actual observed time.
 
     Known limitation (notebook 03, Section C): assumes the vehicle isn't off-schedule by
     more than roughly half a day. Fine for MVP; would need a smarter anchor (e.g. against
     the trip's own scheduled start time) if extreme deviations ever become common.
     """
-    offset = parse_gtfs_time_offset(gtfs_time_str)
+    offset = timedelta(seconds=scheduled_seconds)
     midnight = actual_eastern.normalize()
 
     candidates = [
@@ -151,7 +169,7 @@ def compute_arrival_deviations(
 
         key = (trip_id, stop_sequence)
         scheduled = stop_times_lookup.get(key)
-        if scheduled is None or not scheduled.arrival_time:
+        if scheduled is None or scheduled.arrival_time is None:
             continue
 
         actual_eastern = to_eastern(row.timestamp_eastern)
@@ -204,7 +222,7 @@ def compute_departure_deviations(
         key = (trip_id, stop_sequence)
         scheduled = stop_times_lookup.get(key)
 
-        if scheduled is None or not scheduled.departure_time:
+        if scheduled is None or scheduled.departure_time is None:
             continue
 
         actual_eastern = to_eastern(row.timestamp_eastern)
