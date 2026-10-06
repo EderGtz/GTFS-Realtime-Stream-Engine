@@ -157,6 +157,13 @@ html += '</div>';
         }
         html += '</div>';
 
+        // History section
+        html += '<div class="route-history-section">';
+        html += '<button class="history-toggle-btn" data-route="' + escapeHtml(data.route_id) + '">' +
+            '\uD83D\uDCC8 View ' + historyDays + '-day trend</button>';
+        html += '<div class="history-content" style="display:none"></div>';
+        html += '</div>';
+
         results.innerHTML = html;
         results.classList.add('open');
     }
@@ -178,6 +185,167 @@ html += '</div>';
     }
 
     var lastSearchedData = null;
+
+    // --- Route history state ----------------------------------------------
+    var historyChart = null;
+    var historyDays = 7;
+    var historyOpen = false;
+
+    // --- Route history: fetch + render --------------------------------------
+
+    function fetchHistory(routeId, days) {
+        historyDays = days;
+        var content = results.querySelector('.history-content');
+        if (!content) return;
+
+        content.innerHTML = '<div class="history-empty">Loading history\u2026</div>';
+
+        fetch('/v1/routes/' + encodeURIComponent(routeId) + '/history?days=' + days)
+            .then(function (resp) {
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                return resp.json();
+            })
+            .then(function (data) {
+                renderHistory(data);
+            })
+            .catch(function (err) {
+                content.innerHTML = '<div class="history-empty">Could not load history (' +
+                    escapeHtml(err.message) + ')</div>';
+            });
+    }
+
+    function formatHourLabel(isoString) {
+        var d = new Date(isoString);
+        var month = d.toLocaleString('en-US', { month: 'short' });
+        var day = d.getDate();
+        var hour = d.toLocaleString('en-US', { hour: 'numeric' });
+        return month + ' ' + day + ', ' + hour;
+    }
+
+    function renderHistory(data) {
+        var content = results.querySelector('.history-content');
+        if (!content) return;
+
+        if (!data.data_points || data.data_points.length === 0) {
+            content.innerHTML = '<div class="history-empty">No historical data yet. ' +
+                'The analytics engine needs to run for at least one hour to accumulate data.</div>';
+            return;
+        }
+
+        var points = data.data_points;
+
+        // Summary stats
+        var sumOnTime = 0, sumAvgDev = 0, sumVehicles = 0, sumBunching = 0;
+        var worstOnTime = 101, worstHour = '';
+        for (var i = 0; i < points.length; i++) {
+            var p = points[i];
+            sumOnTime += p.on_time_pct;
+            sumAvgDev += p.avg_deviation;
+            sumVehicles += p.vehicle_count;
+            sumBunching += p.bunching_events;
+            if (p.on_time_pct < worstOnTime) {
+                worstOnTime = p.on_time_pct;
+                worstHour = p.hour;
+            }
+        }
+        var n = points.length;
+        var avgOnTime = (sumOnTime / n).toFixed(1);
+        var avgDev = Math.round(sumAvgDev / n);
+
+        var html = '';
+        html += '<div class="history-chart-wrap"><canvas id="history-chart"></canvas></div>';
+
+        html += '<div class="history-summary">';
+        html += '<span class="label">Avg on-time</span><span class="value" style="color:' +
+            pctColor(parseFloat(avgOnTime)) + '">' + avgOnTime + '%</span>';
+        html += '<span class="label">Avg deviation</span><span class="value">' +
+            formatSeconds(avgDev) + '</span>';
+        html += '<span class="label">Worst hour</span><span class="value">' +
+            worstOnTime.toFixed(0) + '%</span>';
+        html += '<span class="label">Total vehicles</span><span class="value">' +
+            sumVehicles.toLocaleString() + '</span>';
+        html += '<span class="label">Bunching events</span><span class="value">' +
+            sumBunching + '</span>';
+        html += '<span class="label">Data points</span><span class="value">' + n + '</span>';
+        html += '</div>';
+
+        // Day selector
+        var dayOptions = [1, 3, 7, 14];
+        html += '<div class="history-days">';
+        for (var d = 0; d < dayOptions.length; d++) {
+            var active = dayOptions[d] === historyDays ? ' active' : '';
+            html += '<button class="day-btn' + active + '" data-days="' + dayOptions[d] + '">' +
+                dayOptions[d] + 'd</button>';
+        }
+        html += '</div>';
+
+        content.innerHTML = html;
+
+        // Render chart
+        var canvas = content.querySelector('#history-chart');
+        if (canvas && window.Chart) {
+            if (historyChart) historyChart.destroy();
+            historyChart = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: points.map(function (p) { return formatHourLabel(p.hour); }),
+                    datasets: [{
+                        label: 'On-time %',
+                        data: points.map(function (p) { return p.on_time_pct; }),
+                        borderColor: '#3498db',
+                        backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0,
+                        pointHoverRadius: 4,
+                        borderWidth: 2,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function (ctx) {
+                                    var p = points[ctx.dataIndex];
+                                    return [
+                                        'On-time: ' + p.on_time_pct + '%',
+                                        'Avg dev: ' + formatSeconds(p.avg_deviation),
+                                        'P95: ' + formatSeconds(p.p95_deviation),
+                                        'Vehicles: ' + p.vehicle_count,
+                                        'Bunching: ' + p.bunching_events,
+                                    ];
+                                },
+                            },
+                        },
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                maxTicksLimit: 6,
+                                font: { size: 10 },
+                                color: '#999',
+                            },
+                            grid: { display: false },
+                        },
+                        y: {
+                            min: 0,
+                            max: 100,
+                            ticks: {
+                                stepSize: 25,
+                                font: { size: 10 },
+                                color: '#999',
+                                callback: function (v) { return v + '%'; },
+                            },
+                            grid: { color: '#f0f0f0' },
+                        },
+                    },
+                },
+            });
+        }
+    }
 
     function showLoading() {
         results.innerHTML = '<div style="color:#888">Searching\u2026</div>';
@@ -226,6 +394,47 @@ html += '</div>';
             }
             // Re-render to update button state
             if (lastSearchedData) renderResults(lastSearchedData);
+        }
+    });
+
+    // --- History toggle + day selector handlers --------------------------
+
+    results.addEventListener('click', function (e) {
+        // History expand/collapse
+        if (e.target && e.target.classList.contains('history-toggle-btn')) {
+            var routeId = e.target.getAttribute('data-route');
+            var content = results.querySelector('.history-content');
+            if (!content) return;
+
+            if (historyOpen) {
+                content.style.display = 'none';
+                e.target.classList.remove('active');
+                historyOpen = false;
+            } else {
+                content.style.display = 'block';
+                e.target.classList.add('active');
+                historyOpen = true;
+                fetchHistory(routeId, historyDays);
+            }
+            return;
+        }
+
+        // Day selector buttons
+        if (e.target && e.target.classList.contains('day-btn')) {
+            var days = parseInt(e.target.getAttribute('data-days'), 10);
+            if (isNaN(days)) return;
+
+            // Update active state
+            var allBtns = results.querySelectorAll('.day-btn');
+            for (var i = 0; i < allBtns.length; i++) allBtns[i].classList.remove('active');
+            e.target.classList.add('active');
+
+            // Re-fetch with new day range
+            var toggleBtn = results.querySelector('.history-toggle-btn');
+            if (toggleBtn) {
+                var rId = toggleBtn.getAttribute('data-route');
+                fetchHistory(rId, days);
+            }
         }
     });
 

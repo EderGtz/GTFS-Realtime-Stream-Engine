@@ -117,6 +117,43 @@
             padding: 1px 6px; font-size: 12px; white-space: nowrap;
         }
         #info-panel .flow-arrow { color: #aaa; margin: 0 2px; }
+        .route-history-section {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid #eee;
+        }
+        .history-toggle-btn {
+            background: none; border: 1px solid #ddd; border-radius: 6px;
+            padding: 7px 12px; cursor: pointer; font-size: 13px;
+            color: #333; width: 100%; text-align: left;
+            transition: background 0.15s;
+        }
+        .history-toggle-btn:hover { background: #f5f5f5; }
+        .history-toggle-btn.active { background: #333; color: #fff; border-color: #333; }
+        .history-content {
+            margin-top: 10px;
+        }
+        .history-chart-wrap {
+            position: relative; height: 160px; margin-bottom: 10px;
+        }
+        .history-summary {
+            display: grid; grid-template-columns: 1fr 1fr;
+            gap: 4px 12px; font-size: 12px; margin-bottom: 10px;
+        }
+        .history-summary .label { color: #666; }
+        .history-summary .value { font-weight: 600; color: #222; text-align: right; }
+        .history-days {
+            display: flex; gap: 6px;
+        }
+        .day-btn {
+            flex: 1; padding: 5px 0; border: 1px solid #ddd; border-radius: 4px;
+            background: none; cursor: pointer; font-size: 12px; color: #555;
+            text-align: center; transition: background 0.15s, color 0.15s;
+        }
+        .day-btn:hover { background: #f0f0f0; }
+        .day-btn.active { background: #333; color: #fff; border-color: #333; }
+        .history-empty {
+            color: #888; font-size: 12px; padding: 8px 0;
+        }
     </style>
 </head>
 <body>
@@ -200,6 +237,7 @@
     </div>
     <div id="stats">Loading...</div>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/chart.js@4.4.7/dist/chart.umd.js"></script>
     <script type="module" src="/map.js"></script>
     <script src="/info-toggle.js"></script>
     <script src="/route-search.js"></script>
