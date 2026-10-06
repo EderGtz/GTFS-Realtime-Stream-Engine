@@ -385,6 +385,7 @@ html += '</div>';
 
     results.addEventListener('click', function (e) {
         if (e.target && e.target.classList.contains('route-filter-btn')) {
+            e.stopPropagation();
             var action = e.target.getAttribute('data-action');
             if (action === 'clear' && window.clearRouteFilter) {
                 window.clearRouteFilter();
@@ -402,6 +403,7 @@ html += '</div>';
     results.addEventListener('click', function (e) {
         // History expand/collapse
         if (e.target && e.target.classList.contains('history-toggle-btn')) {
+            e.stopPropagation();
             var routeId = e.target.getAttribute('data-route');
             var content = results.querySelector('.history-content');
             if (!content) return;
@@ -421,6 +423,7 @@ html += '</div>';
 
         // Day selector buttons
         if (e.target && e.target.classList.contains('day-btn')) {
+            e.stopPropagation();
             var days = parseInt(e.target.getAttribute('data-days'), 10);
             if (isNaN(days)) return;
 
