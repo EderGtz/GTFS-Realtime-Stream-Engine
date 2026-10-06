@@ -36,6 +36,25 @@ class TestParseGtfsTimeOffset:
         assert parse_gtfs_time_offset("25:10:00") == pd.Timedelta(hours=25, minutes=10)
 
 
+
+class TestGtfsTimeToSeconds:
+    def test_normal_time(self):
+        from metrics.schedule_deviation import gtfs_time_to_seconds
+        assert gtfs_time_to_seconds("08:15:30") == 8 * 3600 + 15 * 60 + 30
+
+    def test_midnight(self):
+        from metrics.schedule_deviation import gtfs_time_to_seconds
+        assert gtfs_time_to_seconds("00:00:00") == 0
+
+    def test_past_midnight(self):
+        from metrics.schedule_deviation import gtfs_time_to_seconds
+        assert gtfs_time_to_seconds("25:10:00") == 25 * 3600 + 10 * 60
+
+    def test_no_seconds(self):
+        from metrics.schedule_deviation import gtfs_time_to_seconds
+        assert gtfs_time_to_seconds("08:05:00") == 8 * 3600 + 5 * 60
+
+
 class TestResolveScheduledDatetime:
     def test_same_day_anchor(self):
         actual = eastern_ts("2026-08-18 08:20:00")

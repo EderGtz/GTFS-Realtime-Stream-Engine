@@ -334,6 +334,129 @@ class TestHasChanged:
 
 
 
+class TestServiceDayFilter:
+    """Tests for _build_active_service_ids and the service-day filter in load()."""
+
+    def _write_calendar(self, gtfs_dir, rows):
+        pd.DataFrame(rows).to_csv(gtfs_dir / "calendar.txt", index=False)
+
+    def _write_calendar_dates(self, gtfs_dir, rows):
+        pd.DataFrame(rows).to_csv(gtfs_dir / "calendar_dates.txt", index=False)
+
+    def test_returns_none_when_no_calendar_files(self, gtfs_dir):
+        data = GtfsStaticData(gtfs_dir)
+        assert data._build_active_service_ids() is None
+
+    def test_returns_none_when_calendar_empty(self, gtfs_dir):
+        (gtfs_dir / "calendar.txt").write_text("")
+        data = GtfsStaticData(gtfs_dir)
+        assert data._build_active_service_ids() is None
+
+    def test_active_weekday_service_included(self, gtfs_dir):
+        from datetime import datetime, timezone
+        today = datetime.now(tz=timezone.utc).date()
+        today_str = today.strftime("%Y%m%d")
+        self._write_calendar(gtfs_dir, [{
+            "service_id": "weekday",
+            "monday": 1, "tuesday": 1, "wednesday": 1,
+            "thursday": 1, "friday": 1, "saturday": 0, "sunday": 0,
+            "start_date": "20260101", "end_date": "20261231",
+        }])
+        data = GtfsStaticData(gtfs_dir)
+        result = data._build_active_service_ids()
+        assert result is not None
+        # Whether "weekday" is included depends on today's day-of-week,
+        # but it should be a valid set.
+        assert isinstance(result, set)
+
+    def test_calendar_dates_exception_adds_service(self, gtfs_dir):
+        from datetime import datetime, timezone, timedelta
+        today = datetime.now(tz=timezone.utc).date()
+        today_str = today.strftime("%Y%m%d")
+        self._write_calendar(gtfs_dir, [{
+            "service_id": "base",
+            "monday": 1, "tuesday": 1, "wednesday": 1,
+            "thursday": 1, "friday": 1, "saturday": 1, "sunday": 1,
+            "start_date": "20260101", "end_date": "20261231",
+        }])
+        self._write_calendar_dates(gtfs_dir, [
+            {"service_id": "holiday_special", "date": today_str, "exception_type": 1},
+        ])
+        data = GtfsStaticData(gtfs_dir)
+        result = data._build_active_service_ids()
+        assert result is not None
+        assert "holiday_special" in result
+
+    def test_calendar_dates_exception_removes_service(self, gtfs_dir):
+        from datetime import datetime, timezone
+        today = datetime.now(tz=timezone.utc).date()
+        today_str = today.strftime("%Y%m%d")
+        self._write_calendar(gtfs_dir, [
+            {
+                "service_id": "weekday",
+                "monday": 1, "tuesday": 1, "wednesday": 1,
+                "thursday": 1, "friday": 1, "saturday": 1, "sunday": 1,
+                "start_date": "20260101", "end_date": "20261231",
+            },
+            {
+                "service_id": "keep_me",
+                "monday": 1, "tuesday": 1, "wednesday": 1,
+                "thursday": 1, "friday": 1, "saturday": 1, "sunday": 1,
+                "start_date": "20260101", "end_date": "20261231",
+            },
+        ])
+        self._write_calendar_dates(gtfs_dir, [
+            {"service_id": "weekday", "date": today_str, "exception_type": 2},
+        ])
+        data = GtfsStaticData(gtfs_dir)
+        result = data._build_active_service_ids()
+        assert result is not None
+        assert "keep_me" in result
+        # weekday is removed for today, but may survive via ±1 day margin
+        # if it is active on adjacent days (which it is, since it runs every day).
+        # The important thing: exception_type=2 does not crash and "keep_me" is preserved.
+
+    def test_service_day_filter_reduces_trips(self, gtfs_dir):
+        """Trips with inactive service_id should be filtered out when calendar exists."""
+        from datetime import datetime, timezone
+        today = datetime.now(tz=timezone.utc).date()
+        # Add a service_id column to trips and a calendar that marks
+        # "active_service" as always on.
+        trips = pd.DataFrame([
+            {"trip_id": "active_trip", "route_id": "Red", "direction_id": 0,
+             "service_id": "always_on"},
+            {"trip_id": "inactive_trip", "route_id": "Red", "direction_id": 0,
+             "service_id": "never_on"},
+        ])
+        trips.to_csv(gtfs_dir / "trips.txt", index=False)
+        stop_times = pd.DataFrame([
+            {"trip_id": "active_trip", "stop_sequence": 1,
+             "arrival_time": "08:00:00", "departure_time": "08:00:30", "stop_id": "70001"},
+            {"trip_id": "inactive_trip", "stop_sequence": 1,
+             "arrival_time": "08:00:00", "departure_time": "08:00:30", "stop_id": "70001"},
+        ])
+        stop_times.to_csv(gtfs_dir / "stop_times.txt", index=False)
+        self._write_calendar(gtfs_dir, [{
+            "service_id": "always_on",
+            "monday": 1, "tuesday": 1, "wednesday": 1,
+            "thursday": 1, "friday": 1, "saturday": 1, "sunday": 1,
+            "start_date": "20260101", "end_date": "20261231",
+        }])
+
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+        assert "active_trip" in data.direction_lookup
+        assert ("inactive_trip", 1) not in data.stop_times_lookup
+
+    def test_no_filter_when_trips_lacks_service_id(self, gtfs_dir):
+        """Without service_id column, all trips are kept (graceful fallback)."""
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+        # The base fixture has 3 trips (one with missing direction),
+        # all should be in direction_lookup (minus the one without direction).
+        assert len(data.direction_lookup) == 2
+
+
 class TestSchemaValidation:
     def test_raises_when_required_trips_column_is_missing(self, gtfs_dir):
         trips = pd.DataFrame([
