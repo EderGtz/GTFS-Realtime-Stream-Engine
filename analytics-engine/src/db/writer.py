@@ -49,7 +49,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, TypedDict
 
-from pymongo import ASCENDING, MongoClient, UpdateOne
+from pymongo import ASCENDING, DESCENDING, MongoClient, UpdateOne
 from pymongo.collection import Collection
 from pymongo.errors import PyMongoError
 
@@ -225,6 +225,32 @@ class MetricsWriter:
         self.deviation_collection.create_index(
             [("location", "2dsphere")],
             name="deviation_location_2dsphere",
+        )
+
+        # Read-pattern indexes for the API endpoints. Without these, every
+        # GET /v1/routes/:id/performance and GET /v1/status/live does a
+        # COLLSCAN over 2.7M+ documents (measured: 3-7s per request).
+        # With them, the same queries examine ~9 documents (IXSCAN).
+        #
+        # dev_route_time  → /v1/routes/:id/performance (route_id + 3-min window)
+        # dev_time        → /v1/status/live (time window only)
+        # bunch_route_time → /v1/routes/:id/performance bunching query
+        # bunch_time       → /v1/status/live bunching query
+        self.deviation_collection.create_index(
+            [("route_id", ASCENDING), ("actual_at", DESCENDING)],
+            name="dev_route_time",
+        )
+        self.deviation_collection.create_index(
+            [("actual_at", DESCENDING)],
+            name="dev_time",
+        )
+        self.bunching_collection.create_index(
+            [("route_id", ASCENDING), ("end_time", DESCENDING)],
+            name="bunch_route_time",
+        )
+        self.bunching_collection.create_index(
+            [("end_time", DESCENDING)],
+            name="bunch_time",
         )
 
     def write_bunching_actions(self, actions: list[tuple[str, BunchingEvent]]) -> int:
