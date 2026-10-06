@@ -127,6 +127,7 @@ services:
       dockerfile: Dockerfile
     container_name: gtfs_analytics
     restart: unless-stopped
+    mem_limit: 1g
     environment:
       <<: *common-env
       KAFKA_BROKERS: kafka:29092
