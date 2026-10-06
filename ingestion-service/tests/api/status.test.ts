@@ -257,3 +257,51 @@ describe('GET /v1/status/live', () => {
         expect(res.status).toBe(404);
     });
 });
+
+// ── TTL Cache ─────────────────────────────────────────────────────────
+
+describe('GET /v1/status/live — TTL cache', () => {
+    test('second request within TTL returns cached response', async () => {
+        const deviationDocs = [
+            {
+                vehicle_id: 'V1', trip_id: 'T1', stop_sequence: 1,
+                kind: 'arrival', deviation_seconds: 120,
+                scheduled_at: new Date(), actual_at: new Date(),
+            },
+        ];
+        const bunchingDocs: any[] = [];
+
+        const collections = {
+            client: {} as any,
+            deviations: mockCollection(deviationDocs),
+            bunching: mockCollection(bunchingDocs),
+        } as unknown as ApiCollections;
+
+        // createApp creates a fresh router per call, so each call has its own cache.
+        const app = createApp(collections);
+
+        const res1 = await request(app).get('/v1/status/live');
+        const res2 = await request(app).get('/v1/status/live');
+
+        expect(res1.status).toBe(200);
+        expect(res2.status).toBe(200);
+        // Same generated_at proves the second response came from cache.
+        expect(res2.body.meta.generated_at).toBe(res1.body.meta.generated_at);
+    });
+
+    test('cache does not affect data correctness', async () => {
+        const collections = {
+            client: {} as any,
+            deviations: mockCollection([]),
+            bunching: mockCollection([]),
+        } as unknown as ApiCollections;
+
+        const app = createApp(collections);
+        const res = await request(app).get('/v1/status/live');
+
+        expect(res.status).toBe(200);
+        expect(res.body.delays).toEqual([]);
+        expect(res.body.bunching).toEqual([]);
+    });
+});
+
