@@ -22,9 +22,26 @@ const LIVE_WINDOW_MS = 3 * 60 * 1000; // 3 minutes
 export function createStatusRouter(collections: ApiCollections): Router {
     const router = Router();
 
+    // TTL cache for the /v1/status/live response. The map polls every ~30s
+    // and every open browser gets its own response. With the indexes
+    // in place the query is ~ms, but the cache still caps DB work to one
+    // scan per TTL regardless of how many browsers are open.
+    //
+    // FUTURE FIX: replace with Redis or an in-memory LRU if the number of
+    // concurrent consumers grows beyond a handful of browsers.
+    let cachedPayload: LiveResponse | null = null;
+    let cachedAt = 0;
+    const CACHE_TTL_MS = 5_000;
+
     router.get('/status/live', async (_req, res, next) => {
         const start = Date.now();
         try {
+            // Serve from cache if fresh enough.
+            if (cachedPayload && Date.now() - cachedAt < CACHE_TTL_MS) {
+                res.json(cachedPayload);
+                return;
+            }
+
             const cutoff = new Date(Date.now() - LIVE_WINDOW_MS);
 
             const [deviationDocs, bunchingDocs] = await Promise.all([
@@ -69,6 +86,10 @@ export function createStatusRouter(collections: ApiCollections): Router {
                     bunching_count: bunching.length,
                 },
             };
+
+            // Cache the payload for the TTL window.
+            cachedPayload = response;
+            cachedAt = Date.now();
 
             logger.info(
                 { delay_count: delays.length, bunching_count: bunching.length, duration_ms: Date.now() - start },
