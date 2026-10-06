@@ -24,11 +24,12 @@ Known GTFS quirks already discovered elsewhere in this project, handled here too
 
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 
-from metrics.schedule_deviation import ScheduledStopTime
+from metrics.schedule_deviation import ScheduledStopTime, gtfs_time_to_seconds
 from utils.logger import get_logger
 
 _REQUIRED_FILES = (
@@ -123,6 +124,27 @@ class GtfsStaticData:
         self._validate_columns("stops.txt", stops_df)
         self._validate_columns("routes.txt", routes_df)
 
+        # Filter to active service days before building lookups.
+        # Only trips whose service_id is active today (± 1 day) can ever match live pings.
+        # Skipped when trips.txt has no service_id column or no calendar data.
+        if "service_id" in trips_df.columns:
+            active_service_ids = self._build_active_service_ids()
+            if active_service_ids is not None:
+                original_trips = len(trips_df)
+                trips_df = trips_df[trips_df["service_id"].isin(active_service_ids)].copy()
+                filtered_trip_ids = set(trips_df["trip_id"].astype(str))
+                original_st = len(stop_times_df)
+                stop_times_df = stop_times_df[
+                    stop_times_df["trip_id"].astype(str).isin(filtered_trip_ids)
+                ].copy()
+                logger.info(
+                    "Service-day filter: %d -> %d trips, %d -> %d stop_times "
+                    "(%d active service_ids)",
+                    original_trips, len(trips_df),
+                    original_st, len(stop_times_df),
+                    len(active_service_ids),
+                )
+
         # Build everything into local variables first.
         # The current snapshot is only replaced after all validation/building succeeds
         direction_lookup = self._build_direction_lookup(trips_df)
@@ -172,6 +194,80 @@ class GtfsStaticData:
         return False
 
     # --- internals ---
+
+    def _build_active_service_ids(self) -> set[str] | None:
+        """Compute the set of service_ids active today ± 1 day.
+
+        Reads calendar.txt (day-of-week patterns with date ranges) and
+        calendar_dates.txt (exception dates that add/remove service).
+        Returns None if neither file exists (no filtering — keep all trips).
+        Returns a set of service_id strings otherwise.
+
+        The ±1 day margin handles midnight-crossing trips: the consumer may
+        process a ping shortly after a service-day rollover, and the
+        resolve_scheduled_datetime nearest-anchor matching already spans
+        previous/same/next calendar day.
+        """
+        calendar_path = self.gtfs_dir / "calendar.txt"
+        calendar_dates_path = self.gtfs_dir / "calendar_dates.txt"
+
+        if not calendar_path.exists() and not calendar_dates_path.exists():
+            return None  # keep everything
+
+        today = datetime.now(tz=UTC).date()
+        target_dates = [today - timedelta(days=1), today, today + timedelta(days=1)]
+        active: set[str] = set()
+
+        # calendar.txt: service_id active on a date if the day-of-week flag
+        # is 1 AND the date falls within start_date..end_date.
+        if calendar_path.exists():
+            try:
+                cal = pd.read_csv(
+                    calendar_path,
+                    dtype={
+                        "service_id": str, 
+                        "start_date": str, 
+                        "end_date": str
+                    },
+                )
+                day_cols = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+                for row in cal.itertuples():
+                    start = str(row.start_date)
+                    end = str(row.end_date)
+                    for d in target_dates:
+                        d_str = d.strftime("%Y%m%d")
+                        if start <= d_str <= end:
+                            day_idx = d.weekday()  # Monday=0
+                            if getattr(row, day_cols[day_idx], 0) == 1:
+                                active.add(str(row.service_id))
+                                break
+            except (pd.errors.EmptyDataError, pd.errors.ParserError):
+                logger.warning("calendar.txt is empty or malformed, skipping.")
+
+        # calendar_dates.txt: exception_type 1 = added, 2 = removed.
+        if calendar_dates_path.exists():
+            try:
+                cal_dates = pd.read_csv(
+                    calendar_dates_path,
+                    dtype={
+                        "service_id": str, 
+                        "date": str
+                    },
+                )
+                target_strs = {d.strftime("%Y%m%d") for d in target_dates}
+                for row in cal_dates.itertuples():
+                    d_str = str(row.date)
+                    if d_str not in target_strs:
+                        continue
+                    sid = str(row.service_id)
+                    if int(row.exception_type) == 1:
+                        active.add(sid)
+                    elif int(row.exception_type) == 2:
+                        active.discard(sid)
+            except (pd.errors.EmptyDataError, pd.errors.ParserError):
+                logger.warning("calendar_dates.txt is empty or malformed, skipping.")
+
+        return active if active else None
 
     def _validate_files_exist(self) -> None:
         missing = [
@@ -233,14 +329,15 @@ class GtfsStaticData:
                 )
 
             key = (trip_id, stop_sequence)
-
+            # Pre-parse times to integer seconds-of-day for compact storage.
+            # gtfs_time_to_seconds handles values >= 24:00:00 (past-midnight trips).
             arrival_time = (
-                str(row.arrival_time)
+                gtfs_time_to_seconds(str(row.arrival_time))
                 if pd.notna(row.arrival_time)
                 else None
             )
             departure_time = (
-                str(row.departure_time)
+                gtfs_time_to_seconds(str(row.departure_time))
                 if pd.notna(row.departure_time)
                 else None
             )
