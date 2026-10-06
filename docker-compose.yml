@@ -13,7 +13,7 @@ services:
     image: mongo:7.0
     container_name: gtfs_mongodb
     restart: unless-stopped
-    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.75"]
     ports:
       - "127.0.0.1:${MONGO_PORT:-27017}:27017"
     volumes:
