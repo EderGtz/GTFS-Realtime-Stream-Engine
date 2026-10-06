@@ -77,8 +77,8 @@ class TestLoad:
 
         assert len(data.stop_times_lookup) == 3
         entry = data.stop_times_lookup[("12345678", 2)]
-        assert entry.arrival_time == "08:05:00"
-        assert entry.departure_time == "08:05:30"
+        assert entry.arrival_time == 8 * 3600 + 5 * 60  # 08:05:00 in seconds
+        assert entry.departure_time == 8 * 3600 + 5 * 60 + 30  # 08:05:30 in seconds
 
     def test_stop_id_is_loaded_from_stop_times(self, gtfs_dir):
         """stop_id is needed for location enrichment (2dsphere index)."""
@@ -119,7 +119,7 @@ class TestLoad:
 
         entry = data.stop_times_lookup[("12345678", 1)]
         assert entry.arrival_time is None
-        assert entry.departure_time == "08:00:00"
+        assert entry.departure_time == 8 * 3600  # 08:00:00 in seconds
 
     def test_preserves_past_midnight_time_strings_unparsed(self, gtfs_dir):
         # GTFS times >= 24:00:00 must pass through untouched. Parsing them is
@@ -128,7 +128,7 @@ class TestLoad:
         data.load()
 
         entry = data.stop_times_lookup[("ADDED-1584904727", 1)]
-        assert entry.arrival_time == "25:10:00"
+        assert entry.arrival_time == 25 * 3600 + 10 * 60  # 25:10:00 (past midnight) in seconds
 
     def test_builds_stops_lookup(self, gtfs_dir):
         data = GtfsStaticData(gtfs_dir)

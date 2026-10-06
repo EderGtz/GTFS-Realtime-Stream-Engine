@@ -39,7 +39,7 @@ class TestParseGtfsTimeOffset:
 class TestResolveScheduledDatetime:
     def test_same_day_anchor(self):
         actual = eastern_ts("2026-08-18 08:20:00")
-        resolved = resolve_scheduled_datetime(actual, "08:15:00")
+        resolved = resolve_scheduled_datetime(actual, 8 * 3600 + 15 * 60)  # 08:15:00
         assert resolved == eastern_ts("2026-08-18 08:15:00")
 
     def test_midnight_crossing_anchors_to_previous_day(self):
@@ -47,14 +47,14 @@ class TestResolveScheduledDatetime:
         # 01:10 on the 19th (i.e. the PREVIOUS service day's 25:10, not literally
         # parsed against the 19th's own midnight).
         actual = eastern_ts("2026-08-19 01:15:00")
-        resolved = resolve_scheduled_datetime(actual, "25:10:00")
+        resolved = resolve_scheduled_datetime(actual, 25 * 3600 + 10 * 60)  # 25:10:00
         assert resolved == eastern_ts("2026-08-19 01:10:00")
 
     def test_picks_closest_candidate_not_just_same_day(self):
         # An early-morning ping just after midnight, scheduled time is small (00:05),
         # which legitimately belongs to the CURRENT day here, not a stretch backward.
         actual = eastern_ts("2026-08-19 00:07:00")
-        resolved = resolve_scheduled_datetime(actual, "00:05:00")
+        resolved = resolve_scheduled_datetime(actual, 5 * 60)  # 00:05:00
         assert resolved == eastern_ts("2026-08-19 00:05:00")
 
 
@@ -122,7 +122,7 @@ class TestComputeArrivalDeviations:
         lookup = {
             ("t1", 5): ScheduledStopTime(
                 trip_id="t1", stop_sequence=5,
-                arrival_time="10:02:00", departure_time="10:15:00",
+                arrival_time=10 * 3600 + 2 * 60, departure_time=10 * 3600 + 15 * 60,
             ),
         }
         results = compute_arrival_deviations(dwell_pings, lookup)
@@ -137,7 +137,7 @@ class TestComputeArrivalDeviations:
         lookup = {
             ("t1", 5): ScheduledStopTime(
                 trip_id="t1", stop_sequence=5,
-                arrival_time=None, departure_time="10:15:00",
+                arrival_time=None, departure_time=10 * 3600 + 15 * 60,
             ),
         }
         results = compute_arrival_deviations(dwell_pings, lookup)
@@ -155,7 +155,7 @@ class TestComputeDepartureDeviations:
         lookup = {
             ("t1", 5): ScheduledStopTime(
                 trip_id="t1", stop_sequence=5,
-                arrival_time="10:02:00", departure_time="10:15:00",
+                arrival_time=10 * 3600 + 2 * 60, departure_time=10 * 3600 + 15 * 60,
             ),
         }
         results = compute_departure_deviations(dwell_pings, lookup)
@@ -168,7 +168,7 @@ class TestComputeDepartureDeviations:
         lookup = {
             ("t1", 5): ScheduledStopTime(
                 trip_id="t1", stop_sequence=5,
-                arrival_time="10:02:00", departure_time=None,
+                arrival_time=10 * 3600 + 2 * 60, departure_time=None,
             ),
         }
         results = compute_departure_deviations(dwell_pings, lookup)
