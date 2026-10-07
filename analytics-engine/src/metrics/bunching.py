@@ -163,13 +163,13 @@ def detect_bunching_events(
                     events.append(
                         BunchingEvent(
                             route_id=run.iloc[0]["route_id"],
-                            direction_id=run.iloc[0]["direction_id"],
+                            direction_id=int(run.iloc[0]["direction_id"]),
                             vehicle_a=run.iloc[0]["vehicle_a"],
                             vehicle_b=run.iloc[0]["vehicle_b"],
                             start_time=run.iloc[0]["time_bucket"],
                             end_time=run.iloc[-1]["time_bucket"],
                             observation_count=len(run),
-                            min_distance_meters=run["distance_meters"].min(),
+                            min_distance_meters=float(run["distance_meters"].min()),
                         )
                     )
                 run_start = i
