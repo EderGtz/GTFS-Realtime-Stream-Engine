@@ -159,9 +159,23 @@ html += '</div>';
 
         // History section
         html += '<div class="route-history-section">';
-        html += '<button class="history-toggle-btn" data-route="' + escapeHtml(data.route_id) + '">' +
+        html += '<div style="display:flex;align-items:center;gap:6px">';
+        html += '<button class="history-toggle-btn" data-route="' + escapeHtml(data.route_id) + '" style="flex:1">' +
             '\uD83D\uDCC8 View ' + historyDays + '-day trend</button>';
+        html += '<button class="history-help-btn" title="What does this chart show?" ' +
+            'style="background:none;border:1px solid #ddd;border-radius:6px;cursor:pointer;' +
+            'font-size:14px;color:#888;width:30px;height:30px;flex-shrink:0">?</button>';
+        html += '</div>';
         html += '<div class="history-content" style="display:none"></div>';
+        html += '<div class="history-help" style="display:none;padding:8px 0;font-size:12px;line-height:1.5;color:#555;border-top:1px solid #eee;margin-top:8px">';
+        html += '<div style="margin-bottom:4px"><strong>What this chart shows:</strong></div>';
+        html += '<div style="margin-bottom:3px">Each point is one hour of data, aggregated by the analytics engine as it processes live pings.</div>';
+        html += '<div style="margin-bottom:3px"><span style="color:#888">On-time %</span> &mdash; share of vehicle arrivals within &plusmn;3 minutes of schedule (APTA standard)</div>';
+        html += '<div style="margin-bottom:3px"><span style="color:#888">Avg deviation</span> &mdash; average minutes off schedule across all vehicles that hour</div>';
+        html += '<div style="margin-bottom:3px"><span style="color:#888">P95 deviation</span> &mdash; 95% of vehicles were this late or less</div>';
+        html += '<div style="margin-bottom:3px"><span style="color:#888">Bunching events</span> &mdash; pairs of buses detected running too close together</div>';
+        html += '<div>Hover over the chart to see all metrics for a specific hour.</div>';
+        html += '</div>';
         html += '</div>';
 
         results.innerHTML = html;
@@ -348,6 +362,16 @@ html += '</div>';
                 e.target.classList.add('active');
                 historyOpen = true;
                 fetchHistory(routeId, historyDays);
+            }
+            return;
+        }
+
+        // History help toggle (the small ? next to the trend button)
+        if (e.target && e.target.classList.contains('history-help-btn')) {
+            e.stopPropagation();
+            var helpDiv = results.querySelector('.history-help');
+            if (helpDiv) {
+                helpDiv.style.display = helpDiv.style.display === 'none' ? 'block' : 'none';
             }
             return;
         }
