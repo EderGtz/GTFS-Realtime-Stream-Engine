@@ -59,14 +59,19 @@
                     backgroundColor: 'rgba(52, 152, 219, 0.1)',
                     fill: true,
                     tension: 0.3,
-                    pointRadius: 0,
-                    pointHoverRadius: 4,
+                    pointRadius: 2,
+                    pointHoverRadius: 5,
+                    pointBackgroundColor: '#3498db',
                     borderWidth: 2,
                 }],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
                 plugins: {
                     legend: { display: false },
                     tooltip: {
