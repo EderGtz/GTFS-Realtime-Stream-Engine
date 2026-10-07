@@ -7,7 +7,8 @@ testcontainers. They verify the infrastructure integration that unit tests
 
 1. Kafka produce/consume roundtrip with real broker
 2. MongoDB persistence: indexes, upserts, document shape, 2dsphere
-3. End-to-end: Kafka produce -> consume -> process -> MongoDB persist
+3. End-to-end: Kafka produce -> consume -> process -> MongoDB persist,
+   with GTFS-static data from a real feed fixture (tests/fixtures/gtfs/)
 
 Run with: uv run pytest tests/test_integration.py -v
 Requires: Docker daemon running on the host.
@@ -16,6 +17,7 @@ Requires: Docker daemon running on the host.
 import json
 import time
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -25,8 +27,9 @@ from testcontainers.community.mongodb import MongoDbContainer
 
 from consumer import AnalyticsConsumer, WindowResult
 from db.writer import MetricsWriter
+from gtfs_static.loader import GtfsStaticData
 from metrics.bunching import BunchingEvent
-from metrics.schedule_deviation import DeviationResult, ScheduledStopTime
+from metrics.schedule_deviation import DeviationResult, to_eastern
 
 # Only run when Docker is available; skip in environments without it.
 pytestmark = pytest.mark.skipif(
@@ -66,11 +69,9 @@ def mongodb():
 def mongo_uri(mongodb):
     return mongodb.get_connection_url()
 
-
 @pytest.fixture(scope="module")
 def bootstrap_servers(kafka):
     return kafka.get_bootstrap_server()
-
 
 # ---------------------------------------------------------------------------
 # 1. Kafka produce/consume roundtrip
@@ -140,7 +141,6 @@ class TestKafkaRoundtrip:
         # The value should be bytes, decodable as UTF-8 JSON
         received = json.loads(msg.value().decode("utf-8"))
         assert received["vehicle_id"] == "bin-v1"
-
 
 # ---------------------------------------------------------------------------
 # 2. MongoDB persistence: indexes, upserts, document shape, 2dsphere
@@ -329,46 +329,108 @@ class TestMongoDBPersistence:
 
         writer.close()
 
-
 # ---------------------------------------------------------------------------
 # 3. End-to-end: Kafka produce -> consume -> process -> MongoDB persist
 # ---------------------------------------------------------------------------
 
+def _pick_scheduled_stop(static: GtfsStaticData):
+    """Deterministically choose the (trip, stop_sequence) the e2e pings are
+    built around: a trip with a real scheduled arrival at a stop with real
+    coordinates. Sorted iteration keeps the choice stable across runs.
+    Past-midnight arrivals are skipped here because their anchoring behavior is
+    covered by the fixture quirk tests, not this pipeline test."""
+    for (trip_id, stop_sequence), scheduled in sorted(static.stop_times_lookup.items()):
+        if trip_id not in static.direction_lookup or trip_id not in static.trip_route_lookup:
+            continue
+        if scheduled.arrival_time is None or scheduled.arrival_time >= 24 * 3600:
+            continue
+        stop_info = (
+            static.stops_lookup.get(scheduled.stop_id)
+            if scheduled.stop_id
+            else None
+        )
+        if stop_info is None or stop_info.stop_lat is None or stop_info.stop_lon is None:
+            continue
+        route_id = static.trip_route_lookup[trip_id]
+        return trip_id, stop_sequence, scheduled, stop_info, route_id
+    raise AssertionError("fixture feed has no scheduled stop with coordinates")
+
+
 class TestEndToEndPipeline:
-    """Full pipeline integration: produce synthetic pings to Kafka, consume
-    them through AnalyticsConsumer._process_window, and verify the results
-    landed in MongoDB via MetricsWriter.
+    """Full pipeline integration: produce vehicle pings derived from a real GTFS
+    feed fixture, consume them through a real AnalyticsConsumer, and verify the
+    results landed in MongoDB enriched with real schedule data.
 
-    Uses a real Kafka broker and real MongoDB, but injects synthetic static
-    data (instead of reading real MBTA files) to keep the test self-contained.
-    The processing logic itself is validated in unit tests; this test verifies
-    the infrastructure wiring."""
+    Uses a real Kafka broker, real MongoDB, and the curated MBTA fixture from
+    tests/fixtures/gtfs/ as GTFS-static data.
+    The pings arrive exactly 60 seconds after a real scheduled stop time at a
+    stop with real coordinates, so the assertions can check exact deviation
+    values and the enrichment (route name, GeoJSON location) the consumer
+    attaches from the feed."""
 
-    def test_kafka_to_mongodb_pipeline(self, bootstrap_servers, mongo_uri):
+    def test_kafka_to_mongodb_pipeline(self, bootstrap_servers, mongo_uri, gtfs_fixture):
         topic = "integration-e2e-pipeline"
         db_name = "test_e2e"
 
-        # 1. Produce synthetic pings to Kafka
-        producer = Producer({"bootstrap.servers": bootstrap_servers})
-        pings = [
-            {
-                "vehicle_id": "E2E-A", "trip_id": "E2E-T1", "route_id": "E2E-R1",
-                "lat": 42.00000, "lon": -71.00000, "stop_id": "E2E-S1",
-                "current_stop_sequence": 1, "current_status": "STOPPED_AT",
-                "timestamp": "2026-09-14 10:00:00",
-            },
-            {
-                "vehicle_id": "E2E-B", "trip_id": "E2E-T2", "route_id": "E2E-R1",
-                "lat": 42.00001, "lon": -71.00000, "stop_id": "E2E-S1",
-                "current_stop_sequence": 1, "current_status": "STOPPED_AT",
-                "timestamp": "2026-09-14 10:00:00",
-            },
+        # 1. Load the real feed fixture and pick a deterministic scheduled stop
+        #    to build the pings around.
+        feed_dir = gtfs_fixture("mbta-2019-07-25")
+        static = GtfsStaticData(feed_dir)
+        static.load()
+
+        trip_id, stop_sequence, scheduled, stop_info, route_id = _pick_scheduled_stop(static)
+        route_name = static.routes_lookup.get(route_id)
+        arrival_seconds = scheduled.arrival_time
+        assert arrival_seconds is not None
+
+        # Two vehicles report the same trip at the same stop: two vehicles on
+        # top of each other is exactly what bunching detection looks for, and
+        # both generate an arrival deviation at the same scheduled stop.
+        midnight = to_eastern(pd.Timestamp.now(tz="UTC")).normalize()
+        scheduled_dt = cast(
+            pd.Timestamp, midnight + pd.Timedelta(seconds=arrival_seconds)
+        )
+        actual_dt = cast(
+            pd.Timestamp, scheduled_dt + pd.Timedelta(seconds=60)
+        )  # exactly 1 min late
+
+        def make_ping(vehicle_id: str, at: pd.Timestamp) -> dict:
+            # Shape matches what ingestion-service/src/ingestion/validator.ts
+            # publishes (IVehicleTelemetry + producer's agency_id/ingested_at).
+            return {
+                "agency_id": "mbta",
+                "vehicle_id": vehicle_id,
+                "trip_id": trip_id,
+                "route_id": route_id,
+                "direction_id": static.direction_lookup[trip_id],
+                "location": {
+                    "type": "Point",
+                    "coordinates": [stop_info.stop_lon, stop_info.stop_lat],
+                },
+                "timestamp": at.tz_convert("UTC").isoformat(),
+                "bearing": None,
+                "speed": None,
+                "current_stop_sequence": stop_sequence,
+                "stop_id": scheduled.stop_id,
+                "current_status": "STOPPED_AT",
+                "ingested_at": actual_dt.tz_convert("UTC").isoformat(),
+            }
+
+        # Two poll buckets 15s apart with both vehicles in each one: the
+        # minimum persistence run bunching detection accepts (two consecutive
+        # observations).
+        ping_times: list[pd.Timestamp] = [
+            actual_dt,
+            cast(pd.Timestamp, actual_dt + pd.Timedelta(seconds=15)),
         ]
+        pings = [make_ping(v, at) for at in ping_times for v in ("E2E-A", "E2E-B")]
+
+        # 2. Produce to Kafka and consume back with a real Consumer
+        producer = Producer({"bootstrap.servers": bootstrap_servers})
         for ping in pings:
             producer.produce(topic, json.dumps(ping).encode("utf-8"))
         producer.flush(timeout=10)
 
-        # 2. Consume from Kafka using a real Consumer
         kafka_consumer = Consumer({
             "bootstrap.servers": bootstrap_servers,
             "group.id": "integration-e2e-group",
@@ -376,58 +438,35 @@ class TestEndToEndPipeline:
             "enable.auto.commit": False,
         })
         kafka_consumer.subscribe([topic])
-
         consumed_pings = []
         deadline = time.time() + 15
-        while time.time() < deadline and len(consumed_pings) < 2:
+        while time.time() < deadline and len(consumed_pings) < len(pings):
             msg = kafka_consumer.poll(timeout=2.0)
-            if msg is not None and msg.error() is None:
-                consumed_pings.append(json.loads(msg.value().decode("utf-8")))
+            value = msg.value() if msg is not None and msg.error() is None else None
+            if value is not None:
+                consumed_pings.append(json.loads(value.decode("utf-8")))
 
-        assert len(consumed_pings) == 2, f"Expected 2 pings, got {len(consumed_pings)}"
+        assert len(consumed_pings) == len(pings), (
+            f"Expected {len(pings)} pings, got {len(consumed_pings)}"
+        )
 
-        # 3. Process through the analytics pipeline
-        #    Build a real MetricsWriter against the test MongoDB
+        # 3. Process through the analytics pipeline against the real feed
         writer = MetricsWriter(mongo_uri=mongo_uri, db_name=db_name)
 
-        # Build synthetic static data for the consumer
-        from unittest.mock import MagicMock
-
-        from gtfs_static.loader import StopInfo
-
-        mock_static = MagicMock()
-        mock_static.direction_lookup = {"E2E-T1": 0, "E2E-T2": 0}
-        mock_static.stop_times_lookup = {
-            ("E2E-T1", 1): ScheduledStopTime(
-                trip_id="E2E-T1", stop_sequence=1,
-                arrival_time="10:00:00", departure_time=None,
-                stop_id="E2E-S1",
-            ),
-        }
-        mock_static.stops_lookup = {
-            "E2E-S1": StopInfo(
-                stop_id="E2E-S1", stop_name="Test Stop",
-                stop_lat=42.3954, stop_lon=-71.1425,
-            ),
-        }
-
-        # Create the consumer with the real writer callback
         def on_window_result(result: WindowResult):
             return writer.persist_window(result)
 
-        from unittest.mock import patch as mock_patch
-        with mock_patch("consumer.GtfsStaticData", return_value=mock_static):
-            consumer = AnalyticsConsumer(
-                kafka_config={
-                    "bootstrap.servers": bootstrap_servers,
-                    "group.id": "integration-e2e-consumer",
-                    "auto.offset.reset": "earliest",
-                },
-                topic=topic,
-                on_window_result=on_window_result,
-            )
+        consumer = AnalyticsConsumer(
+            kafka_config={
+                "bootstrap.servers": bootstrap_servers,
+                "group.id": "integration-e2e-consumer",
+                "auto.offset.reset": "earliest",
+            },
+            topic=topic,
+            gtfs_dir=feed_dir,
+            on_window_result=on_window_result,
+        )
 
-        # Manually add the consumed pings to the buffer and process
         for ping in consumed_pings:
             consumer.buffer.add(ping)
 
@@ -437,16 +476,37 @@ class TestEndToEndPipeline:
 
         result = consumer._process_window(pings_df)
 
-        # 4. Verify MongoDB state
+        # 4. Verify the persisted results
         assert result is not None
         assert result["success"] is True
+        assert result["deviations_written"] == 2  # one arrival event per vehicle
+        assert result["bunching_written"] == 1
 
-        # At minimum, the pipeline processed without error and persisted
-        # something. The exact counts depend on whether the synthetic data
-        # triggers deviation/bunching detection (which it might not, since
-        # the pings are at the same timestamp without scheduled times).
-        # The key assertion is that the pipeline completed and wrote to Mongo.
-        assert result["success"] is True
+        # Deviations: each vehicle was exactly 60s late at a real scheduled
+        # stop, and the consumer enriched the result with the route name and
+        # the stop's real coordinates from the fixture feed.
+        docs = list(writer.deviation_collection.find({"trip_id": trip_id}))
+        assert len(docs) == 2
+        for doc in docs:
+            assert doc["kind"] == "arrival"
+            assert doc["stop_sequence"] == stop_sequence
+            assert doc["deviation_seconds"] == pytest.approx(60)
+            assert doc["route_id"] == route_id
+            assert doc["route_long_name"] == route_name
+            assert doc["location"] == {
+                "type": "Point",
+                "coordinates": [stop_info.stop_lon, stop_info.stop_lat],
+            }
+
+        # Bunching: the two vehicles sat at the same real stop for both poll
+        # buckets.
+        bunch = writer.bunching_collection.find_one({"route_id": route_id})
+        assert bunch is not None
+        assert bunch["vehicle_a"] == "E2E-A"
+        assert bunch["vehicle_b"] == "E2E-B"
+        assert bunch["direction_id"] == static.direction_lookup[trip_id]
+        assert bunch["observation_count"] == 2
+        assert bunch["min_distance_meters"] == pytest.approx(0.0)
 
         kafka_consumer.close()
         writer.close()
