@@ -30,3 +30,6 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .ruff_cache/
+
+# Agent config
+.hermes/
