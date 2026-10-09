@@ -10,6 +10,8 @@ jobs:
   integration:
     name: Kafka + MongoDB Integration
     runs-on: ubuntu-latest
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: "true"
     defaults:
       run:
         working-directory: ./analytics-engine
@@ -28,6 +30,27 @@ jobs:
 
     - name: Install dependencies
       run: uv sync
+
+    - name: Pre-pull Docker images (retry on registry flakiness)
+      working-directory: .
+      run: |
+        set -u
+        images=(
+          confluentinc/cp-kafka:7.6.0
+          mongo:7.0
+        )
+        for img in "${images[@]}"; do
+          ok=""
+          for attempt in 1 2 3 4 5; do
+            if docker pull "$img"; then ok=1; break; fi
+            echo "::warning::docker pull $img failed (attempt $attempt/5), retrying in 20s"
+            sleep 20
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::docker pull $img failed after 5 attempts"
+            exit 1
+          fi
+        done
 
     - name: Run Integration Tests
       run: uv run pytest tests/test_integration.py -v --timeout=120
