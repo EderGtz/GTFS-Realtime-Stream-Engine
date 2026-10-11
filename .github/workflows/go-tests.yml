@@ -22,7 +22,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.27'
-        cache: false
+        cache-dependency-path: archive-consumer/go.sum
 
     - name: Check formatting (gofmt)
       run: |
@@ -59,7 +59,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.27'
-        cache: false
+        cache-dependency-path: archive-consumer/go.sum
 
     - name: Pre-pull Kafka image (retry on registry flakiness)
       working-directory: .
