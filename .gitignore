@@ -33,3 +33,5 @@ __pycache__/
 
 # Agent config
 .hermes/
+# Compiled Go binary (archive-consumer)
+archive-consumer/archive-consumer
