@@ -35,3 +35,9 @@ __pycache__/
 .hermes/
 # Compiled Go binary (archive-consumer)
 archive-consumer/archive-consumer
+
+# Archive output (NDJSON + gz)
+archive-consumer/data/
+
+# Archive output (repo root, shared by host-run and the compose service)
+/data/archive/

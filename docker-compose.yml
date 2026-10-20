@@ -141,6 +141,26 @@ services:
       postgres:
         condition: service_healthy
 
+  archive:
+    build:
+      context: ./archive-consumer
+      dockerfile: Dockerfile
+    container_name: gtfs_archive
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_TOPIC: raw.vehicle-positions
+      KAFKA_GROUP_ID: archive-group
+      ARCHIVE_DIR: /data/archive
+    volumes:
+      # Bind mount so archives are greppable from the
+      # host and survive `docker compose down -v`
+      - ./data/archive:/data/archive
+    depends_on:
+      kafka:
+        condition: service_healthy
+
 volumes:
   mongodb_data:
   kafka_data:
