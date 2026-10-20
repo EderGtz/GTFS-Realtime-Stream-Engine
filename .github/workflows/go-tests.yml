@@ -40,7 +40,7 @@ jobs:
       run: go build ./...
 
     - name: Run unit tests
-      run: go test ./... -count=1 -v
+      run: go test ./... -count=1 -race -v
 
   go-integration-tests:
     name: Go Integration Tests (Kafka)
@@ -75,4 +75,4 @@ jobs:
         exit 1
 
     - name: Run integration tests
-      run: go test -tags=integration ./... -count=1 -v
+      run: go test -tags=integration ./... -count=1 -race -v
