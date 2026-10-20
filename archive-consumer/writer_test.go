@@ -271,3 +271,29 @@ func TestNoMessages_NoFiles(t *testing.T) {
 		t.Errorf("expected no entries in %s, got %v", dir, entries)
 	}
 }
+
+// Write alone only stages bytes in the bufio RAM buffer — the file on disk is
+// still empty until Flush hands them to the OS (write syscall) and Sync makes
+// them durable (fsync).
+func TestWrite_BuffersUntilFlush(t *testing.T) {
+	dir := t.TempDir()
+	w, _ := newTestWriter(t, dir, time.Date(2026, 10, 7, 15, 5, 0, 0, time.UTC))
+
+	if err := w.Write([]byte(`{"n":1}`)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	path := filepath.Join(dir, "2026-10-07", "15.ndjson")
+	if data, err := os.ReadFile(path); err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	} else if len(data) != 0 {
+		t.Errorf("before Flush, file has %d bytes, want 0 (still in the RAM buffer)", len(data))
+	}
+
+	if err := w.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if got := readPlain(t, path); len(got) != 1 || got[0] != `{"n":1}` {
+		t.Errorf("after Flush, file = %v, want [{\"n\":1}]", got)
+	}
+}
