@@ -15,7 +15,7 @@ const LIVE_WINDOW_MS = 3 * 60 * 1000;
 const ON_TIME_THRESHOLD_SECONDS = 180;
 
 /**
- * Nearest-rank percentile (no external dependency).
+ * Linear-interpolation percentile (no external dependency).
  * Input must be sorted ascending.
  * Returns 0 for an empty array.
  */
