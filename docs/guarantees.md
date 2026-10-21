@@ -48,3 +48,19 @@ The analytics engine does not enforce global ordering across the entire pipeline
 **Guarantee: No unconditional zero-data-loss guarantee**
 
 While the at-least-once architecture and idempotent persistence strongly protect against data loss during downstream transient failures, the system is an MVP and does not provide an absolute zero-data-loss guarantee. Data may still be lost if Kafka evicts a message before processing (retention limits), or if the upstream Ingestion Service fails to publish to the broker.
+
+---
+
+## 7. Archive Consumer (Roadmap #3)
+
+**Guarantee: At-least-once archiving, commit-gated on durable writes**
+
+The archive consumer (`archive-consumer/`, see `docs/archive-consumer.md`) joins the same `raw.vehicle-positions` topic under its own consumer group (`archive-group`), so its offsets and progress are fully independent of the analytics engine. It writes each message verbatim as one NDJSON line and follows the same delivery model as Section 1: a batch is written and fsynced to disk first, and only then are its Kafka offsets committed.
+
+If the archive consumer crashes before the commit, Kafka redelivers the batch after restart. The NDJSON layer performs no deduplication, so **duplicate lines are possible** in the archive after a crash. Duplicates are accepted while missing data is not.
+
+**Guarantee: Crash-safe files**
+
+The active hour's file is plain NDJSON (appendable), so a crash leaves at most one partial line and every earlier line intact. Closed hours are gzipped exactly once via tmp-file + atomic rename; a `.ndjson.gz` file at its final name is always complete. On startup the service finalizes (gzips) any stale plain files and appends to the current hour's file if it already exists.
+
+**What the archive does NOT guarantee:** the caveats of Section 6 still apply — messages published while no consumer is running are lost once Kafka's retention window (72h) evicts them. The archive *extends* replayability far beyond 72h, but only for messages it actually received. Files are partitioned by archive write time (UTC), not vehicle event time.

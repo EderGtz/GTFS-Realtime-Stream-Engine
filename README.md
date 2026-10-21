@@ -49,7 +49,7 @@ For the full deployment runbook, see `docs/phase6-deployment-guide.md`.
                        │     Apache Kafka       │
                        │  raw.vehicle-positions │
                        └──────────┬─────────────┘
-                                  │  (consumer group)
+                                  │  (consumer groups)
         ┌────────────────────────────────────────────────┐
         │     analytics-engine (Python + pandas)         │
         │  - Loads & periodically refreshes GTFS-static  │
@@ -74,6 +74,23 @@ For the full deployment runbook, see `docs/phase6-deployment-guide.md`.
                           + curl / terminal demo)
 ```
 
+An independent second consumer group archives the same stream untouched —
+see [`docs/archive-consumer.md`](docs/archive-consumer.md):
+
+```
+                       ┌────────────────────────┐
+                       │     Apache Kafka       │
+                       │  raw.vehicle-positions │
+                       └──────────┬─────────────┘
+                                  │  (archive-group)
+                       ┌──────────▼─────────────┐
+                       │   archive-consumer     │
+                       │   (Go, pure I/O)       │
+                       └──────────┬─────────────┘
+                                  ▼
+              data/archive/YYYY-MM-DD/HH.ndjson(.gz)   (UTC)
+```
+
 **Five layers:**
 
 1. **Ingestion (TypeScript):** Polls MBTA's raw Protobuf feed, decodes, validates, publishes to Kafka.
@@ -91,6 +108,7 @@ For the full deployment runbook, see `docs/phase6-deployment-guide.md`.
 | Analytics Engine | Python 3.12+, `confluent-kafka`, `pandas`, `numpy` | Join real-time pings against static schedule, compute delay/bunching |
 | Data Store | MongoDB | Idempotent upserts; 2dsphere geospatial index on deviation locations |
 | Serving API | TypeScript, Node.js, Express | REST endpoint exposing computed metrics |
+| Archive | Go, `segmentio/kafka-go` | Second consumer group (`archive-group`): write raw messages verbatim to NDJSON.gz — [`docs/archive-consumer.md`](docs/archive-consumer.md) |
 | Runtime | Docker Compose, Hetzner CX23 VPS | Full stack running 24/7 on a single server |
 
 ## Build Phases
@@ -141,6 +159,8 @@ These are deliberate, documented tradeoffs. Detailed explanations are in [`docs/
 - **Poll-interval bucket jitter can split continuous bunching events.** Real MBTA cadence has ~16s median jitter against the nominal 15s interval.
 - **Departure deviations are disabled.** The last-STOPPED_AT heuristic was never validated against real data. Disabled pending empirical validation.
 - **No cross-document atomicity.** Bunching and deviation writes are separate `bulk_write` calls. Idempotent upserts ensure retry convergence.
+- **Archive can contain duplicate lines after a crash.** The archive consumer commits Kafka offsets only after fsync; a crash in between redelivers the batch. At-least-once, same philosophy as above ([`docs/archive-consumer.md`](docs/archive-consumer.md)).
+- **Archive files are partitioned by write time, not event time.** Files are organized by when the message was archived (UTC), not when the vehicle moved.
 
 ## How to Run
 
@@ -162,9 +182,10 @@ files already in the repo):
 ```bash
 cp ingestion-service/.env.example ingestion-service/.env
 cp analytics-engine/.env.example analytics-engine/.env
+cp archive-consumer/.env.example archive-consumer/.env
 ```
 
-Both files point to `localhost` because the Docker Compose ports are
+These files point to `localhost` because the Docker Compose ports are
 mapped to `127.0.0.1` (MongoDB on 27017, Kafka on 9092).
 
 **3. Install dependencies:**
@@ -185,6 +206,9 @@ cd ingestion-service && npm run start:api
 
 # Terminal 3 — Analytics (consumes Kafka, computes metrics, writes to MongoDB)
 cd analytics-engine && uv run python src/main.py
+
+# Terminal 4 — Archive (appends raw messages to data/archive/)
+cd archive-consumer && go run .
 ```
 
 The map is at `http://localhost:3000/map` and the API at
@@ -200,7 +224,7 @@ If you just want to see the full stack running without touching terminals:
 docker compose up -d
 ```
 
-This starts all six containers (Kafka, MongoDB, Kafbat UI, ingestion, API, analytics). The map is at `http://localhost:3000/map`.
+This starts all containers (Kafka, MongoDB, Kafbat UI, ingestion, API, analytics, archive). The map is at `http://localhost:3000/map` and the API at `http://localhost:3000/v1/status/live`.
 
 **Important: after making code changes, the running containers will still be running the old code.** Docker images are built once at `up` time. If you edit source files and want the containers to pick up the changes, you must rebuild:
 
@@ -266,6 +290,14 @@ gtfs-realtime-stream-engine/
 │   ├── notebooks/                  # Jupyter exploration (01-04)
 │   └── tests/                      # 137 tests: unit + integration (testcontainers)
 │
+├── archive-consumer/               # Roadmap #3 — Go (docs/archive-consumer.md)
+│   ├── Dockerfile                # Multi-stage: static binary, non-root
+│   ├── main.go                   # Entry point + graceful shutdown
+│   ├── archive.go                # Consume loop: batch → write → fsync → commit
+│   ├── writer.go                 # NDJSON writer: hourly rotation + gzip
+│   ├── config.go / env.go        # Fail-loud config + .env loader
+│   └── *_test.go                 # Unit + integration (testcontainers, KRaft)
+│
 ├── docs/
 │   ├── phases.md                 # Detailed phase documentation + ADRs
 │   ├── phase6-deployment-guide.md  # Production deployment runbook
@@ -292,3 +324,4 @@ gtfs-realtime-stream-engine/
 | [`docs/kafkaIntegrationTestExplanation.md`](docs/kafkaIntegrationTestExplanation.md) | How the Kafka round-trip integration test works using testcontainers — spinning up a real broker, publishing, consuming, and verifying the message in CI. |
 | [`docs/number-flow-explained.md`](docs/number-flow-explained.md) | Why the stats panel, the API response, and the map show different counts — what each number represents and where it comes from in the pipeline. |
 | [`docs/multi-agency-vision.md`](docs/multi-agency-vision.md) | Long-term vision for turning the single-MBTA pipeline into a multi-agency platform with configurable connectors. |
+| [`docs/archive-consumer.md`](docs/archive-consumer.md) | Design, semantics, and operations for the Go archive consumer — the second Kafka consumer group that writes raw messages to NDJSON.gz. |
