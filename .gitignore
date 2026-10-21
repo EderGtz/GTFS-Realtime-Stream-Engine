@@ -24,7 +24,7 @@ npm-debug.log*
 # Static GTFS files
 MBTA_GTFS/
 
-# Enviroment and cache files from the analytics engine
+# Environment and cache files from the analytics engine
 __pycache__/
 .venv/
 .pytest_cache/
