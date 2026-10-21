@@ -1,5 +1,8 @@
 # GTFS Realtime Stream Engine
 
+> **Naming:** this repository (`Public-Transport-Telemetry`) contains the
+> *GTFS Realtime Stream Engine* (production checkout: `GTFS-Realtime-Stream-Engine`).
+
 An event-driven pipeline that ingests, processes, and analyzes public transit telemetry. Deployed and running live at `http://157.90.113.98:3000/map`.
 
 ## Why This Project Exists
@@ -10,7 +13,7 @@ The pipeline itself is the core product. It runs continuously against live MBTA 
 
 ## Live Deployment
 
-The full stack is deployed on a Hetzner CX23 (2 vCPU, 4GB RAM, €4.49/mo) running six containers via Docker Compose. The pipeline has been running unattended since 2026-09-25.
+The full stack is deployed on a Hetzner CX23 (2 vCPU, 4GB RAM, €4.49/mo) running seven containers via Docker Compose. The pipeline has been running unattended since 2026-09-25.
 
 **Access:**
 - Map: http://157.90.113.98:3000/map
@@ -58,10 +61,12 @@ For the full deployment runbook, see `docs/phase6-deployment-guide.md`.
         └───────────────────────┬────────────────────────┘
                                   │  (persisted metrics)
                        ┌────────────────────────┐
-                       │       MongoDB          │
+                       │  MongoDB (live state)  │
                        │  bunching_events       │
                        │  schedule_deviations   │
                        │  (2dsphere on location)│
+                       │  + PostgreSQL:         │
+                       │  route_hourly_stats    │
                        └──────────┬─────────────┘
                                   │
         ┌────────────────────────────────────────────────┐
@@ -91,13 +96,14 @@ see [`docs/archive-consumer.md`](docs/archive-consumer.md):
               data/archive/YYYY-MM-DD/HH.ndjson(.gz)   (UTC)
 ```
 
-**Five layers:**
+**Six layers:**
 
 1. **Ingestion (TypeScript):** Polls MBTA's raw Protobuf feed, decodes, validates, publishes to Kafka.
 2. **Streaming (Kafka, KRaft mode):** Single broker, 4 partitions, decouples high-frequency ingestion from batch analytics.
 3. **Analytics (Python + pandas):** Kafka consumer that joins real-time pings against GTFS-static schedules, computes schedule deviation and bunching detection.
-4. **Storage (MongoDB):** Idempotent upserts with unique natural-key indexes. 2dsphere geospatial index on deviation locations.
+4. **Storage (MongoDB + PostgreSQL):** MongoDB holds the live layer (idempotent upserts with unique natural-key indexes, 2dsphere geospatial index for the map); PostgreSQL holds hourly history (`route_hourly_stats`).
 5. **Serving API (Express):** REST endpoint exposing computed metrics, served alongside a Leaflet map.
+6. **Archive (Go):** Independent second consumer group (`archive-group`) writing raw messages verbatim to NDJSON.gz — [`docs/archive-consumer.md`](docs/archive-consumer.md).
 
 ## Tech Stack
 
@@ -106,10 +112,18 @@ see [`docs/archive-consumer.md`](docs/archive-consumer.md):
 | Ingestion | TypeScript, Node.js, `protobufjs` | Poll MBTA feed, decode Protobuf, validate, publish to Kafka |
 | Event Broker | Apache Kafka, Docker | Decouple ingestion from analytics; buffer against feed hiccups |
 | Analytics Engine | Python 3.12+, `confluent-kafka`, `pandas`, `numpy` | Join real-time pings against static schedule, compute delay/bunching |
-| Data Store | MongoDB | Idempotent upserts; 2dsphere geospatial index on deviation locations |
+| Data Store | MongoDB + PostgreSQL 16 | MongoDB: live state + geospatial (map queries). PostgreSQL: hourly history behind `GET /v1/routes/:id/history` |
 | Serving API | TypeScript, Node.js, Express | REST endpoint exposing computed metrics |
 | Archive | Go, `segmentio/kafka-go` | Second consumer group (`archive-group`): write raw messages verbatim to NDJSON.gz — [`docs/archive-consumer.md`](docs/archive-consumer.md) |
 | Runtime | Docker Compose, Hetzner CX23 VPS | Full stack running 24/7 on a single server |
+
+**Why two databases (deliberate split, not a half-finished migration):** the live
+layer is upsert-heavy and geospatial — MongoDB's 2dsphere indexes serve the map
+and `GET /v1/status/live`. History is relational — "average delay per hour over
+7 days" is SQL's home turf. The analytics engine therefore writes both: MongoDB
+first (live state, offset-commit gated), and PostgreSQL through a buffered
+retry path that degrades independently — a Postgres outage never stalls or
+kills the consumer.
 
 ## Build Phases
 
@@ -117,7 +131,7 @@ Each phase is a working, demoable checkpoint. Detailed implementation notes, acc
 
 ### Phase 1 — Ingestion Service
 
-Polls the MBTA feed every 15 seconds, decodes raw binary Protobuf into typed JSON, validates coordinates, and writes to MongoDB. Malformed entries are logged and skipped. Uses MongoDB compound unique indexes for idempotency. 193 tests across both services, CI on every push.
+Polls the MBTA feed every 15 seconds, decodes raw binary Protobuf into typed JSON, validates coordinates, and publishes to Kafka. Malformed entries are logged and skipped. Unit and integration test suites across all services, CI on every push.
 
 ![Terminal Ingestion Demo](docs/img/phase1_demo.gif)
 
@@ -160,7 +174,8 @@ These are deliberate, documented tradeoffs. Detailed explanations are in [`docs/
 - **Departure deviations are disabled.** The last-STOPPED_AT heuristic was never validated against real data. Disabled pending empirical validation.
 - **No cross-document atomicity.** Bunching and deviation writes are separate `bulk_write` calls. Idempotent upserts ensure retry convergence.
 - **Archive can contain duplicate lines after a crash.** The archive consumer commits Kafka offsets only after fsync; a crash in between redelivers the batch. At-least-once, same philosophy as above ([`docs/archive-consumer.md`](docs/archive-consumer.md)).
-- **Archive files are partitioned by write time, not event time.** Files are organized by when the message was archived (UTC), not when the vehicle moved.
+- **Archive files are partitioned by write time, not event time.** Files are organized by when the message was archived (UTC), not when the vehicle moved. The PostgreSQL hourly stats bucket by arrival hour for the same reason.
+- **Plain HTTP on a public IP — deliberate demo-only choice.** The API surface is read-only public transit data behind Helmet/CORS/rate-limiting; real TLS would need a domain in front of it.
 
 ## How to Run
 
@@ -274,7 +289,7 @@ gtfs-realtime-stream-engine/
 │   │   ├── api/                      # Express API: server, routes, middleware (Phase 4)
 │   │   ├── public/                   # Leaflet map files (Phase 5)
 │   │   └── utils/                    # Structured logging
-│   └── tests/                        # 135 tests: unit + integration (testcontainers)
+│   └── tests/                        # unit + integration (testcontainers)
 │
 ├── analytics-engine/               # Phases 3, 5 — Python
 │   ├── .env.example              # Required env vars (copy to .env)
@@ -288,7 +303,7 @@ gtfs-realtime-stream-engine/
 │   │   ├── db/                     # MongoDB upsert persistence
 │   │   └── utils/                  # Structured logging
 │   ├── notebooks/                  # Jupyter exploration (01-04)
-│   └── tests/                      # 137 tests: unit + integration (testcontainers)
+│   └── tests/                      # unit + integration (testcontainers)
 │
 ├── archive-consumer/               # Roadmap #3 — Go (docs/archive-consumer.md)
 │   ├── Dockerfile                # Multi-stage: static binary, non-root
@@ -297,6 +312,10 @@ gtfs-realtime-stream-engine/
 │   ├── writer.go                 # NDJSON writer: hourly rotation + gzip
 │   ├── config.go / env.go        # Fail-loud config + .env loader
 │   └── *_test.go                 # Unit + integration (testcontainers, KRaft)
+│
+├── tests/
+│   ├── fixtures/gtfs/              # Shared real-world GTFS fixtures used by BOTH services' test suites
+│   └── contracts/                  # Shared API↔schema contracts (enforced by both test suites)
 │
 ├── docs/
 │   ├── phases.md                 # Detailed phase documentation + ADRs
