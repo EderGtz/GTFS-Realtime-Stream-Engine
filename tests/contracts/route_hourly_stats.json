@@ -1,0 +1,8 @@
+{
+  "comment": "Single source of truth for the route_hourly_stats table and the GET /v1/routes/:id/history API shape. Enforced by BOTH test suites: analytics-engine/tests/test_schema_contract.py (schema + writer row type) and ingestion-service/tests/api/routeHistoryContract.test.ts (SQL + response shape). If either side drifts, a test fails.",
+  "table": "route_hourly_stats",
+  "columns": ["route_id", "hour", "avg_deviation", "p95_deviation", "vehicle_count", "on_time_pct", "bunching_events"],
+  "history_select_columns": ["hour", "avg_deviation", "p95_deviation", "vehicle_count", "on_time_pct", "bunching_events"],
+  "history_datapoint_fields": ["hour", "avg_deviation", "p95_deviation", "vehicle_count", "on_time_pct", "bunching_events"],
+  "history_response_fields": ["route_id", "days", "data_points"]
+}
