@@ -28,7 +28,9 @@ def eastern_ts(s: str) -> pd.Timestamp:
 
 class TestParseGtfsTimeOffset:
     def test_normal_time(self):
-        assert parse_gtfs_time_offset("08:15:30") == pd.Timedelta(hours=8, minutes=15, seconds=30)
+        assert parse_gtfs_time_offset("08:15:30") == pd.Timedelta(
+            hours=8, minutes=15, seconds=30
+        )
 
     def test_past_midnight_time(self):
         # GTFS deliberately allows this -- a trip starting before midnight and
@@ -36,22 +38,25 @@ class TestParseGtfsTimeOffset:
         assert parse_gtfs_time_offset("25:10:00") == pd.Timedelta(hours=25, minutes=10)
 
 
-
 class TestGtfsTimeToSeconds:
     def test_normal_time(self):
         from metrics.schedule_deviation import gtfs_time_to_seconds
+
         assert gtfs_time_to_seconds("08:15:30") == 8 * 3600 + 15 * 60 + 30
 
     def test_midnight(self):
         from metrics.schedule_deviation import gtfs_time_to_seconds
+
         assert gtfs_time_to_seconds("00:00:00") == 0
 
     def test_past_midnight(self):
         from metrics.schedule_deviation import gtfs_time_to_seconds
+
         assert gtfs_time_to_seconds("25:10:00") == 25 * 3600 + 10 * 60
 
     def test_no_seconds(self):
         from metrics.schedule_deviation import gtfs_time_to_seconds
+
         assert gtfs_time_to_seconds("08:05:00") == 8 * 3600 + 5 * 60
 
 
@@ -95,14 +100,31 @@ class TestToEastern:
 def dwell_pings() -> pd.DataFrame:
     """Three STOPPED_AT pings for the same arrival, 5 and 15 minutes apart --
     simulating a vehicle sitting through a long dwell/layover."""
-    return pd.DataFrame([
-        {"vehicle_id": "v1", "trip_id": "t1", "current_stop_sequence": 5,
-         "current_status": "STOPPED_AT", "timestamp_eastern": eastern_ts("2026-08-18 10:00:00")},
-        {"vehicle_id": "v1", "trip_id": "t1", "current_stop_sequence": 5,
-         "current_status": "STOPPED_AT", "timestamp_eastern": eastern_ts("2026-08-18 10:05:00")},
-        {"vehicle_id": "v1", "trip_id": "t1", "current_stop_sequence": 5,
-         "current_status": "STOPPED_AT", "timestamp_eastern": eastern_ts("2026-08-18 10:20:00")},
-    ])
+    return pd.DataFrame(
+        [
+            {
+                "vehicle_id": "v1",
+                "trip_id": "t1",
+                "current_stop_sequence": 5,
+                "current_status": "STOPPED_AT",
+                "timestamp_eastern": eastern_ts("2026-08-18 10:00:00"),
+            },
+            {
+                "vehicle_id": "v1",
+                "trip_id": "t1",
+                "current_stop_sequence": 5,
+                "current_status": "STOPPED_AT",
+                "timestamp_eastern": eastern_ts("2026-08-18 10:05:00"),
+            },
+            {
+                "vehicle_id": "v1",
+                "trip_id": "t1",
+                "current_stop_sequence": 5,
+                "current_status": "STOPPED_AT",
+                "timestamp_eastern": eastern_ts("2026-08-18 10:20:00"),
+            },
+        ]
+    )
 
 
 class TestCollapseToFirstArrival:
@@ -114,24 +136,43 @@ class TestCollapseToFirstArrival:
         # This is the crux of notebook 03 Section E's finding: keeping a LATER ping
         # would inflate the apparent lateness by however long the dwell lasted.
         collapsed = collapse_to_first_arrival(dwell_pings)
-        assert collapsed.iloc[0]["timestamp_eastern"] == eastern_ts("2026-08-18 10:00:00")
+        assert collapsed.iloc[0]["timestamp_eastern"] == eastern_ts(
+            "2026-08-18 10:00:00"
+        )
 
     def test_ignores_non_stopped_at_pings(self):
-        pings = pd.DataFrame([
-            {"vehicle_id": "v1", "trip_id": "t1", "current_stop_sequence": 5,
-             "current_status": "IN_TRANSIT_TO", "timestamp_eastern": eastern_ts("2026-08-18 10:00:00")},
-        ])
+        pings = pd.DataFrame(
+            [
+                {
+                    "vehicle_id": "v1",
+                    "trip_id": "t1",
+                    "current_stop_sequence": 5,
+                    "current_status": "IN_TRANSIT_TO",
+                    "timestamp_eastern": eastern_ts("2026-08-18 10:00:00"),
+                },
+            ]
+        )
         collapsed = collapse_to_first_arrival(pings)
         assert len(collapsed) == 0
 
     def test_keeps_distinct_stops_separate(self, dwell_pings):
-        extra = pd.concat([
-            dwell_pings,
-            pd.DataFrame([{
-                "vehicle_id": "v1", "trip_id": "t1", "current_stop_sequence": 6,
-                "current_status": "STOPPED_AT", "timestamp_eastern": eastern_ts("2026-08-18 10:30:00"),
-            }]),
-        ], ignore_index=True)
+        extra = pd.concat(
+            [
+                dwell_pings,
+                pd.DataFrame(
+                    [
+                        {
+                            "vehicle_id": "v1",
+                            "trip_id": "t1",
+                            "current_stop_sequence": 6,
+                            "current_status": "STOPPED_AT",
+                            "timestamp_eastern": eastern_ts("2026-08-18 10:30:00"),
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
+        )
         collapsed = collapse_to_first_arrival(extra)
         assert len(collapsed) == 2
 
@@ -140,8 +181,10 @@ class TestComputeArrivalDeviations:
     def test_computes_correct_deviation_from_first_arrival(self, dwell_pings):
         lookup = {
             ("t1", 5): ScheduledStopTime(
-                trip_id="t1", stop_sequence=5,
-                arrival_time=10 * 3600 + 2 * 60, departure_time=10 * 3600 + 15 * 60,
+                trip_id="t1",
+                stop_sequence=5,
+                arrival_time=10 * 3600 + 2 * 60,
+                departure_time=10 * 3600 + 15 * 60,
             ),
         }
         results = compute_arrival_deviations(dwell_pings, lookup)
@@ -155,8 +198,10 @@ class TestComputeArrivalDeviations:
         # forced through as a fake "arrival" deviation (notebook 03, Section E).
         lookup = {
             ("t1", 5): ScheduledStopTime(
-                trip_id="t1", stop_sequence=5,
-                arrival_time=None, departure_time=10 * 3600 + 15 * 60,
+                trip_id="t1",
+                stop_sequence=5,
+                arrival_time=None,
+                departure_time=10 * 3600 + 15 * 60,
             ),
         }
         results = compute_arrival_deviations(dwell_pings, lookup)
@@ -173,8 +218,10 @@ class TestComputeDepartureDeviations:
     def test_uses_last_ping_not_first(self, dwell_pings):
         lookup = {
             ("t1", 5): ScheduledStopTime(
-                trip_id="t1", stop_sequence=5,
-                arrival_time=10 * 3600 + 2 * 60, departure_time=10 * 3600 + 15 * 60,
+                trip_id="t1",
+                stop_sequence=5,
+                arrival_time=10 * 3600 + 2 * 60,
+                departure_time=10 * 3600 + 15 * 60,
             ),
         }
         results = compute_departure_deviations(dwell_pings, lookup)
@@ -186,8 +233,10 @@ class TestComputeDepartureDeviations:
     def test_skips_stops_with_no_departure_time(self, dwell_pings):
         lookup = {
             ("t1", 5): ScheduledStopTime(
-                trip_id="t1", stop_sequence=5,
-                arrival_time=10 * 3600 + 2 * 60, departure_time=None,
+                trip_id="t1",
+                stop_sequence=5,
+                arrival_time=10 * 3600 + 2 * 60,
+                departure_time=None,
             ),
         }
         results = compute_departure_deviations(dwell_pings, lookup)

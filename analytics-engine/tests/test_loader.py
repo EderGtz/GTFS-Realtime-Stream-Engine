@@ -7,6 +7,7 @@ project's existing testing convention.
 """
 
 import time
+from datetime import UTC
 
 import pandas as pd
 import pytest
@@ -18,30 +19,74 @@ from gtfs_static.loader import GtfsStaticData, StopInfo
 def gtfs_dir(tmp_path):
     """A minimal, valid 3-file GTFS bundle, plus one deliberately messy row per
     file to exercise the real quirks this loader has to handle."""
-    stops = pd.DataFrame([
-        {"stop_id": "70001", "stop_name": "Alewife", "stop_lat": 42.3954, "stop_lon": -71.1425},
-        {"stop_id": "70002", "stop_name": "Davis", "stop_lat": 42.3968, "stop_lon": -71.1218},
-    ])
+    stops = pd.DataFrame(
+        [
+            {
+                "stop_id": "70001",
+                "stop_name": "Alewife",
+                "stop_lat": 42.3954,
+                "stop_lon": -71.1425,
+            },
+            {
+                "stop_id": "70002",
+                "stop_name": "Davis",
+                "stop_lat": 42.3968,
+                "stop_lon": -71.1218,
+            },
+        ]
+    )
     stops.to_csv(tmp_path / "stops.txt", index=False)
 
-    trips = pd.DataFrame([
-        {"trip_id": "12345678", "route_id": "Red", "direction_id": 0},
-        {"trip_id": "ADDED-1584904727", "route_id": "Red", "direction_id": 1},  # alphanumeric, real-time-added
-        {"trip_id": "no_direction_trip", "route_id": "Red", "direction_id": None},  # missing direction
-    ])
+    trips = pd.DataFrame(
+        [
+            {"trip_id": "12345678", "route_id": "Red", "direction_id": 0},
+            {
+                "trip_id": "ADDED-1584904727",
+                "route_id": "Red",
+                "direction_id": 1,
+            },  # alphanumeric, real-time-added
+            {
+                "trip_id": "no_direction_trip",
+                "route_id": "Red",
+                "direction_id": None,
+            },  # missing direction
+        ]
+    )
     trips.to_csv(tmp_path / "trips.txt", index=False)
 
-    stop_times = pd.DataFrame([
-        {"trip_id": "12345678", "stop_sequence": 1, "arrival_time": None, "departure_time": "08:00:00", "stop_id": "70001"},
-        {"trip_id": "12345678", "stop_sequence": 2, "arrival_time": "08:05:00", "departure_time": "08:05:30", "stop_id": "70002"},
-        {"trip_id": "ADDED-1584904727", "stop_sequence": 1, "arrival_time": "25:10:00", "departure_time": "25:10:30", "stop_id": "70001"},
-    ])
+    stop_times = pd.DataFrame(
+        [
+            {
+                "trip_id": "12345678",
+                "stop_sequence": 1,
+                "arrival_time": None,
+                "departure_time": "08:00:00",
+                "stop_id": "70001",
+            },
+            {
+                "trip_id": "12345678",
+                "stop_sequence": 2,
+                "arrival_time": "08:05:00",
+                "departure_time": "08:05:30",
+                "stop_id": "70002",
+            },
+            {
+                "trip_id": "ADDED-1584904727",
+                "stop_sequence": 1,
+                "arrival_time": "25:10:00",
+                "departure_time": "25:10:30",
+                "stop_id": "70001",
+            },
+        ]
+    )
     stop_times.to_csv(tmp_path / "stop_times.txt", index=False)
 
-    routes = pd.DataFrame([
-        {"route_id": "Red", "route_long_name": "Red Line"},
-        {"route_id": "Blue", "route_long_name": None},  # missing name
-    ])
+    routes = pd.DataFrame(
+        [
+            {"route_id": "Red", "route_long_name": "Red Line"},
+            {"route_id": "Blue", "route_long_name": None},  # missing name
+        ]
+    )
     routes.to_csv(tmp_path / "routes.txt", index=False)
 
     return tmp_path
@@ -61,7 +106,9 @@ class TestLoad:
 
         assert "no_direction_trip" not in data.direction_lookup
 
-    def test_alphanumeric_trip_id_is_preserved_as_a_string_not_corrupted(self, gtfs_dir):
+    def test_alphanumeric_trip_id_is_preserved_as_a_string_not_corrupted(
+        self, gtfs_dir
+    ):
         # should not get coerced to NaN or truncated by numeric type inference.
         data = GtfsStaticData(gtfs_dir)
         data.load()
@@ -97,9 +144,16 @@ class TestLoad:
         trips = pd.DataFrame([{"trip_id": "t1", "route_id": "R1", "direction_id": 0}])
         trips.to_csv(tmp_path / "trips.txt", index=False)
 
-        stop_times = pd.DataFrame([
-            {"trip_id": "t1", "stop_sequence": 1, "arrival_time": "08:00:00", "departure_time": "08:00:30"},
-        ])
+        stop_times = pd.DataFrame(
+            [
+                {
+                    "trip_id": "t1",
+                    "stop_sequence": 1,
+                    "arrival_time": "08:00:00",
+                    "departure_time": "08:00:30",
+                },
+            ]
+        )
         stop_times.to_csv(tmp_path / "stop_times.txt", index=False)
 
         routes = pd.DataFrame([{"route_id": "R1", "route_long_name": "Route 1"}])
@@ -128,7 +182,9 @@ class TestLoad:
         data.load()
 
         entry = data.stop_times_lookup[("ADDED-1584904727", 1)]
-        assert entry.arrival_time == 25 * 3600 + 10 * 60  # 25:10:00 (past midnight) in seconds
+        assert (
+            entry.arrival_time == 25 * 3600 + 10 * 60
+        )  # 25:10:00 (past midnight) in seconds
 
     def test_builds_stops_lookup(self, gtfs_dir):
         data = GtfsStaticData(gtfs_dir)
@@ -156,13 +212,15 @@ class TestLoad:
         original_version = data._current_version
 
         # Corrupt the schema of trips.txt.
-        trips = pd.DataFrame([
-            {
-                "trip_id": "99999999",
-                "route_id": "Red",
-                # direction_id intentionally missing
-            },
-        ])
+        trips = pd.DataFrame(
+            [
+                {
+                    "trip_id": "99999999",
+                    "route_id": "Red",
+                    # direction_id intentionally missing
+                },
+            ]
+        )
         trips.to_csv(gtfs_dir / "trips.txt", index=False)
 
         with pytest.raises(ValueError):
@@ -195,9 +253,16 @@ class TestLoad:
         stops.to_csv(tmp_path / "stops.txt", index=False)
         trips = pd.DataFrame([{"trip_id": "t1", "route_id": "R1", "direction_id": 0}])
         trips.to_csv(tmp_path / "trips.txt", index=False)
-        stop_times = pd.DataFrame([
-            {"trip_id": "t1", "stop_sequence": 1, "arrival_time": "08:00:00", "departure_time": "08:00:30"},
-        ])
+        stop_times = pd.DataFrame(
+            [
+                {
+                    "trip_id": "t1",
+                    "stop_sequence": 1,
+                    "arrival_time": "08:00:00",
+                    "departure_time": "08:00:30",
+                },
+            ]
+        )
         stop_times.to_csv(tmp_path / "stop_times.txt", index=False)
         # routes.txt deliberately absent
 
@@ -226,15 +291,24 @@ class TestLoad:
         stops = pd.DataFrame([{"stop_id": "1", "stop_name": "S"}])
         stops.to_csv(tmp_path / "stops.txt", index=False)
 
-        trips = pd.DataFrame([
-            {"trip_id": "t1", "route_id": "R1", "direction_id": 0},
-            {"trip_id": "t2", "route_id": None, "direction_id": 0},  # no route_id
-        ])
+        trips = pd.DataFrame(
+            [
+                {"trip_id": "t1", "route_id": "R1", "direction_id": 0},
+                {"trip_id": "t2", "route_id": None, "direction_id": 0},  # no route_id
+            ]
+        )
         trips.to_csv(tmp_path / "trips.txt", index=False)
 
-        stop_times = pd.DataFrame([
-            {"trip_id": "t1", "stop_sequence": 1, "arrival_time": "08:00:00", "departure_time": "08:00:30"},
-        ])
+        stop_times = pd.DataFrame(
+            [
+                {
+                    "trip_id": "t1",
+                    "stop_sequence": 1,
+                    "arrival_time": "08:00:00",
+                    "departure_time": "08:00:30",
+                },
+            ]
+        )
         stop_times.to_csv(tmp_path / "stop_times.txt", index=False)
 
         routes = pd.DataFrame([{"route_id": "R1", "route_long_name": "Route 1"}])
@@ -245,7 +319,6 @@ class TestLoad:
 
         assert data.trip_route_lookup["t1"] == "R1"
         assert "t2" not in data.trip_route_lookup
-
 
 
 class TestHasChanged:
@@ -263,9 +336,11 @@ class TestHasChanged:
         data.load()
 
         time.sleep(0.01)
-        updated_trips = pd.DataFrame([
-            {"trip_id": "99999999", "route_id": "Blue", "direction_id": 0},
-        ])
+        updated_trips = pd.DataFrame(
+            [
+                {"trip_id": "99999999", "route_id": "Blue", "direction_id": 0},
+            ]
+        )
         updated_trips.to_csv(gtfs_dir / "trips.txt", index=False)
 
         assert data.has_changed() is True
@@ -276,9 +351,11 @@ class TestHasChanged:
         assert "12345678" in data.direction_lookup
 
         time.sleep(0.01)
-        updated_trips = pd.DataFrame([
-            {"trip_id": "99999999", "route_id": "Blue", "direction_id": 0},
-        ])
+        updated_trips = pd.DataFrame(
+            [
+                {"trip_id": "99999999", "route_id": "Blue", "direction_id": 0},
+            ]
+        )
         updated_trips.to_csv(gtfs_dir / "trips.txt", index=False)
 
         reloaded = data.reload_if_changed()
@@ -292,28 +369,32 @@ class TestHasChanged:
         data.load()
         assert data.reload_if_changed() is False
 
-    def test_feed_version_change_is_detected_even_if_the_three_files_are_untouched(self, gtfs_dir):
+    def test_feed_version_change_is_detected_even_if_the_three_files_are_untouched(
+        self, gtfs_dir
+    ):
         # feed_info.txt is the authoritative version signal when present -- must
         # take priority over the file-fingerprint fallback.
-        pd.DataFrame([{"feed_publisher_name": "MBTA", "feed_version": "2026-08-01"}]).to_csv(
-            gtfs_dir / "feed_info.txt", index=False
-        )
+        pd.DataFrame(
+            [{"feed_publisher_name": "MBTA", "feed_version": "2026-08-01"}]
+        ).to_csv(gtfs_dir / "feed_info.txt", index=False)
 
         data = GtfsStaticData(gtfs_dir)
         data.load()
         assert data.has_changed() is False
 
-        pd.DataFrame([{"feed_publisher_name": "MBTA", "feed_version": "2026-09-01"}]).to_csv(
-            gtfs_dir / "feed_info.txt", index=False
-        )
+        pd.DataFrame(
+            [{"feed_publisher_name": "MBTA", "feed_version": "2026-09-01"}]
+        ).to_csv(gtfs_dir / "feed_info.txt", index=False)
         assert data.has_changed() is True
 
     def test_falls_back_to_fingerprint_when_feed_version_column_is_missing(
         self, gtfs_dir
     ):
-        pd.DataFrame([
-            {"feed_publisher_name": "MBTA"},
-        ]).to_csv(gtfs_dir / "feed_info.txt", index=False)
+        pd.DataFrame(
+            [
+                {"feed_publisher_name": "MBTA"},
+            ]
+        ).to_csv(gtfs_dir / "feed_info.txt", index=False)
 
         data = GtfsStaticData(gtfs_dir)
         data.load()
@@ -331,7 +412,6 @@ class TestHasChanged:
 
         assert version is not None
         assert version.startswith("fingerprint:")
-
 
 
 class TestServiceDayFilter:
@@ -353,15 +433,23 @@ class TestServiceDayFilter:
         assert data._build_active_service_ids() is None
 
     def test_active_weekday_service_included(self, gtfs_dir):
-        from datetime import datetime, timezone
-        today = datetime.now(tz=timezone.utc).date()
-        today_str = today.strftime("%Y%m%d")
-        self._write_calendar(gtfs_dir, [{
-            "service_id": "weekday",
-            "monday": 1, "tuesday": 1, "wednesday": 1,
-            "thursday": 1, "friday": 1, "saturday": 0, "sunday": 0,
-            "start_date": "20260101", "end_date": "20261231",
-        }])
+        self._write_calendar(
+            gtfs_dir,
+            [
+                {
+                    "service_id": "weekday",
+                    "monday": 1,
+                    "tuesday": 1,
+                    "wednesday": 1,
+                    "thursday": 1,
+                    "friday": 1,
+                    "saturday": 0,
+                    "sunday": 0,
+                    "start_date": "20260101",
+                    "end_date": "20261231",
+                }
+            ],
+        )
         data = GtfsStaticData(gtfs_dir)
         result = data._build_active_service_ids()
         assert result is not None
@@ -370,44 +458,82 @@ class TestServiceDayFilter:
         assert isinstance(result, set)
 
     def test_calendar_dates_exception_adds_service(self, gtfs_dir):
-        from datetime import datetime, timezone, timedelta
-        today = datetime.now(tz=timezone.utc).date()
+        from datetime import datetime
+
+        today = datetime.now(tz=UTC).date()
         today_str = today.strftime("%Y%m%d")
-        self._write_calendar(gtfs_dir, [{
-            "service_id": "base",
-            "monday": 1, "tuesday": 1, "wednesday": 1,
-            "thursday": 1, "friday": 1, "saturday": 1, "sunday": 1,
-            "start_date": "20260101", "end_date": "20261231",
-        }])
-        self._write_calendar_dates(gtfs_dir, [
-            {"service_id": "holiday_special", "date": today_str, "exception_type": 1},
-        ])
+        self._write_calendar(
+            gtfs_dir,
+            [
+                {
+                    "service_id": "base",
+                    "monday": 1,
+                    "tuesday": 1,
+                    "wednesday": 1,
+                    "thursday": 1,
+                    "friday": 1,
+                    "saturday": 1,
+                    "sunday": 1,
+                    "start_date": "20260101",
+                    "end_date": "20261231",
+                }
+            ],
+        )
+        self._write_calendar_dates(
+            gtfs_dir,
+            [
+                {
+                    "service_id": "holiday_special",
+                    "date": today_str,
+                    "exception_type": 1,
+                },
+            ],
+        )
         data = GtfsStaticData(gtfs_dir)
         result = data._build_active_service_ids()
         assert result is not None
         assert "holiday_special" in result
 
     def test_calendar_dates_exception_removes_service(self, gtfs_dir):
-        from datetime import datetime, timezone
-        today = datetime.now(tz=timezone.utc).date()
+        from datetime import datetime
+
+        today = datetime.now(tz=UTC).date()
         today_str = today.strftime("%Y%m%d")
-        self._write_calendar(gtfs_dir, [
-            {
-                "service_id": "weekday",
-                "monday": 1, "tuesday": 1, "wednesday": 1,
-                "thursday": 1, "friday": 1, "saturday": 1, "sunday": 1,
-                "start_date": "20260101", "end_date": "20261231",
-            },
-            {
-                "service_id": "keep_me",
-                "monday": 1, "tuesday": 1, "wednesday": 1,
-                "thursday": 1, "friday": 1, "saturday": 1, "sunday": 1,
-                "start_date": "20260101", "end_date": "20261231",
-            },
-        ])
-        self._write_calendar_dates(gtfs_dir, [
-            {"service_id": "weekday", "date": today_str, "exception_type": 2},
-        ])
+        self._write_calendar(
+            gtfs_dir,
+            [
+                {
+                    "service_id": "weekday",
+                    "monday": 1,
+                    "tuesday": 1,
+                    "wednesday": 1,
+                    "thursday": 1,
+                    "friday": 1,
+                    "saturday": 1,
+                    "sunday": 1,
+                    "start_date": "20260101",
+                    "end_date": "20261231",
+                },
+                {
+                    "service_id": "keep_me",
+                    "monday": 1,
+                    "tuesday": 1,
+                    "wednesday": 1,
+                    "thursday": 1,
+                    "friday": 1,
+                    "saturday": 1,
+                    "sunday": 1,
+                    "start_date": "20260101",
+                    "end_date": "20261231",
+                },
+            ],
+        )
+        self._write_calendar_dates(
+            gtfs_dir,
+            [
+                {"service_id": "weekday", "date": today_str, "exception_type": 2},
+            ],
+        )
         data = GtfsStaticData(gtfs_dir)
         result = data._build_active_service_ids()
         assert result is not None
@@ -418,30 +544,61 @@ class TestServiceDayFilter:
 
     def test_service_day_filter_reduces_trips(self, gtfs_dir):
         """Trips with inactive service_id should be filtered out when calendar exists."""
-        from datetime import datetime, timezone
-        today = datetime.now(tz=timezone.utc).date()
         # Add a service_id column to trips and a calendar that marks
         # "active_service" as always on.
-        trips = pd.DataFrame([
-            {"trip_id": "active_trip", "route_id": "Red", "direction_id": 0,
-             "service_id": "always_on"},
-            {"trip_id": "inactive_trip", "route_id": "Red", "direction_id": 0,
-             "service_id": "never_on"},
-        ])
+        trips = pd.DataFrame(
+            [
+                {
+                    "trip_id": "active_trip",
+                    "route_id": "Red",
+                    "direction_id": 0,
+                    "service_id": "always_on",
+                },
+                {
+                    "trip_id": "inactive_trip",
+                    "route_id": "Red",
+                    "direction_id": 0,
+                    "service_id": "never_on",
+                },
+            ]
+        )
         trips.to_csv(gtfs_dir / "trips.txt", index=False)
-        stop_times = pd.DataFrame([
-            {"trip_id": "active_trip", "stop_sequence": 1,
-             "arrival_time": "08:00:00", "departure_time": "08:00:30", "stop_id": "70001"},
-            {"trip_id": "inactive_trip", "stop_sequence": 1,
-             "arrival_time": "08:00:00", "departure_time": "08:00:30", "stop_id": "70001"},
-        ])
+        stop_times = pd.DataFrame(
+            [
+                {
+                    "trip_id": "active_trip",
+                    "stop_sequence": 1,
+                    "arrival_time": "08:00:00",
+                    "departure_time": "08:00:30",
+                    "stop_id": "70001",
+                },
+                {
+                    "trip_id": "inactive_trip",
+                    "stop_sequence": 1,
+                    "arrival_time": "08:00:00",
+                    "departure_time": "08:00:30",
+                    "stop_id": "70001",
+                },
+            ]
+        )
         stop_times.to_csv(gtfs_dir / "stop_times.txt", index=False)
-        self._write_calendar(gtfs_dir, [{
-            "service_id": "always_on",
-            "monday": 1, "tuesday": 1, "wednesday": 1,
-            "thursday": 1, "friday": 1, "saturday": 1, "sunday": 1,
-            "start_date": "20260101", "end_date": "20261231",
-        }])
+        self._write_calendar(
+            gtfs_dir,
+            [
+                {
+                    "service_id": "always_on",
+                    "monday": 1,
+                    "tuesday": 1,
+                    "wednesday": 1,
+                    "thursday": 1,
+                    "friday": 1,
+                    "saturday": 1,
+                    "sunday": 1,
+                    "start_date": "20260101",
+                    "end_date": "20261231",
+                }
+            ],
+        )
 
         data = GtfsStaticData(gtfs_dir)
         data.load()
@@ -459,13 +616,15 @@ class TestServiceDayFilter:
 
 class TestSchemaValidation:
     def test_raises_when_required_trips_column_is_missing(self, gtfs_dir):
-        trips = pd.DataFrame([
-            {
-                "trip_id": "12345678",
-                "route_id": "Red",
-                # direction_id intentionally missing
-            },
-        ])
+        trips = pd.DataFrame(
+            [
+                {
+                    "trip_id": "12345678",
+                    "route_id": "Red",
+                    # direction_id intentionally missing
+                },
+            ]
+        )
         trips.to_csv(gtfs_dir / "trips.txt", index=False)
 
         data = GtfsStaticData(gtfs_dir)
@@ -477,14 +636,16 @@ class TestSchemaValidation:
             data.load()
 
     def test_raises_when_required_stop_times_column_is_missing(self, gtfs_dir):
-        stop_times = pd.DataFrame([
-            {
-                "trip_id": "12345678",
-                "stop_sequence": 1,
-                "arrival_time": "08:00:00",
-                # departure_time intentionally missing
-            },
-        ])
+        stop_times = pd.DataFrame(
+            [
+                {
+                    "trip_id": "12345678",
+                    "stop_sequence": 1,
+                    "arrival_time": "08:00:00",
+                    # departure_time intentionally missing
+                },
+            ]
+        )
         stop_times.to_csv(gtfs_dir / "stop_times.txt", index=False)
 
         data = GtfsStaticData(gtfs_dir)
@@ -496,14 +657,16 @@ class TestSchemaValidation:
             data.load()
 
     def test_raises_when_required_stops_column_is_missing(self, gtfs_dir):
-        stops = pd.DataFrame([
-            {
-                # stop_id intentionally missing
-                "stop_name": "Alewife",
-                "stop_lat": 42.3954,
-                "stop_lon": -71.1425,
-            },
-        ])
+        stops = pd.DataFrame(
+            [
+                {
+                    # stop_id intentionally missing
+                    "stop_name": "Alewife",
+                    "stop_lat": 42.3954,
+                    "stop_lon": -71.1425,
+                },
+            ]
+        )
         stops.to_csv(gtfs_dir / "stops.txt", index=False)
 
         data = GtfsStaticData(gtfs_dir)

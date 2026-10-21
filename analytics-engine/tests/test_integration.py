@@ -49,6 +49,7 @@ def ets(time_str: str) -> pd.Timestamp:
 # This means tests within a class are NOT isolated from each other.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def kafka():
     container = KafkaContainer("confluentinc/cp-kafka:7.6.0")
@@ -69,13 +70,16 @@ def mongodb():
 def mongo_uri(mongodb):
     return mongodb.get_connection_url()
 
+
 @pytest.fixture(scope="module")
 def bootstrap_servers(kafka):
     return kafka.get_bootstrap_server()
 
+
 # ---------------------------------------------------------------------------
 # 1. Kafka produce/consume roundtrip
 # ---------------------------------------------------------------------------
+
 
 class TestKafkaRoundtrip:
     """Verifies that a message produced to Kafka can be consumed back with
@@ -99,11 +103,13 @@ class TestKafkaRoundtrip:
         producer.flush(timeout=10)
 
         # Consume
-        consumer = Consumer({
-            "bootstrap.servers": bootstrap_servers,
-            "group.id": "integration-test-group",
-            "auto.offset.reset": "earliest",
-        })
+        consumer = Consumer(
+            {
+                "bootstrap.servers": bootstrap_servers,
+                "group.id": "integration-test-group",
+                "auto.offset.reset": "earliest",
+            }
+        )
         consumer.subscribe([topic])
 
         msg = consumer.poll(timeout=15.0)
@@ -126,11 +132,13 @@ class TestKafkaRoundtrip:
         producer.produce(topic, raw)
         producer.flush(timeout=10)
 
-        consumer = Consumer({
-            "bootstrap.servers": bootstrap_servers,
-            "group.id": "integration-test-binary-group",
-            "auto.offset.reset": "earliest",
-        })
+        consumer = Consumer(
+            {
+                "bootstrap.servers": bootstrap_servers,
+                "group.id": "integration-test-binary-group",
+                "auto.offset.reset": "earliest",
+            }
+        )
         consumer.subscribe([topic])
 
         msg = consumer.poll(timeout=15.0)
@@ -142,9 +150,11 @@ class TestKafkaRoundtrip:
         received = json.loads(msg.value().decode("utf-8"))
         assert received["vehicle_id"] == "bin-v1"
 
+
 # ---------------------------------------------------------------------------
 # 2. MongoDB persistence: indexes, upserts, document shape, 2dsphere
 # ---------------------------------------------------------------------------
+
 
 class TestMongoDBPersistence:
     """Verifies MetricsWriter against a real MongoDB instance: index creation,
@@ -157,12 +167,10 @@ class TestMongoDBPersistence:
         writer = MetricsWriter(mongo_uri=mongo_uri, db_name=db_name)
 
         bunching_indexes = {
-            idx["name"]
-            for idx in writer.bunching_collection.list_indexes()
+            idx["name"] for idx in writer.bunching_collection.list_indexes()
         }
         deviation_indexes = {
-            idx["name"]
-            for idx in writer.deviation_collection.list_indexes()
+            idx["name"] for idx in writer.deviation_collection.list_indexes()
         }
 
         assert "bunching_natural_key" in bunching_indexes
@@ -177,28 +185,34 @@ class TestMongoDBPersistence:
         writer = MetricsWriter(mongo_uri=mongo_uri, db_name=db_name)
 
         event = BunchingEvent(
-            route_id="UPSERT-R1", direction_id=0,
-            vehicle_a="UPSERT-A", vehicle_b="UPSERT-B",
+            route_id="UPSERT-R1",
+            direction_id=0,
+            vehicle_a="UPSERT-A",
+            vehicle_b="UPSERT-B",
             start_time=ets("2026-09-14 10:00:00"),
             end_time=ets("2026-09-14 10:00:45"),
-            observation_count=4, min_distance_meters=15.0,
+            observation_count=4,
+            min_distance_meters=15.0,
         )
 
         # First write: insert
         count1 = writer.write_bunching_actions([("new", event)])
         assert count1 == 1
 
-        doc = writer.bunching_collection.find_one({
-            "route_id": "UPSERT-R1",
-            "vehicle_a": "UPSERT-A",
-            "vehicle_b": "UPSERT-B",
-        })
+        doc = writer.bunching_collection.find_one(
+            {
+                "route_id": "UPSERT-R1",
+                "vehicle_a": "UPSERT-A",
+                "vehicle_b": "UPSERT-B",
+            }
+        )
         assert doc is not None
         assert doc["observation_count"] == 4
         assert doc["last_action"] == "new"
 
         # Second write: update (same key, extended end_time)
         from dataclasses import replace
+
         updated_event = replace(
             event,
             end_time=ets("2026-09-14 10:01:30"),
@@ -208,19 +222,23 @@ class TestMongoDBPersistence:
         count2 = writer.write_bunching_actions([("update", updated_event)])
         assert count2 == 1
 
-        doc2 = writer.bunching_collection.find_one({
-            "route_id": "UPSERT-R1",
-            "vehicle_a": "UPSERT-A",
-            "vehicle_b": "UPSERT-B",
-        })
+        doc2 = writer.bunching_collection.find_one(
+            {
+                "route_id": "UPSERT-R1",
+                "vehicle_a": "UPSERT-A",
+                "vehicle_b": "UPSERT-B",
+            }
+        )
         assert doc2["observation_count"] == 6
         assert doc2["last_action"] == "update"
         assert doc2["min_distance_meters"] == 12.0
 
         # Only ONE document should exist (upsert, not insert)
-        total = writer.bunching_collection.count_documents({
-            "route_id": "UPSERT-R1",
-        })
+        total = writer.bunching_collection.count_documents(
+            {
+                "route_id": "UPSERT-R1",
+            }
+        )
         assert total == 1
 
         writer.close()
@@ -232,7 +250,9 @@ class TestMongoDBPersistence:
         writer = MetricsWriter(mongo_uri=mongo_uri, db_name=db_name)
 
         dev = DeviationResult(
-            vehicle_id="GEO-V1", trip_id="GEO-T1", stop_sequence=5,
+            vehicle_id="GEO-V1",
+            trip_id="GEO-T1",
+            stop_sequence=5,
             kind="arrival",
             scheduled_at=ets("2026-09-14 10:00:00"),
             actual_at=ets("2026-09-14 10:05:00"),
@@ -245,25 +265,29 @@ class TestMongoDBPersistence:
         count = writer.write_deviation_results([dev])
         assert count == 1
 
-        doc = writer.deviation_collection.find_one({
-            "vehicle_id": "GEO-V1",
-        })
+        doc = writer.deviation_collection.find_one(
+            {
+                "vehicle_id": "GEO-V1",
+            }
+        )
         assert doc is not None
         assert doc["location"]["type"] == "Point"
         assert doc["location"]["coordinates"] == [-71.1425, 42.3954]
 
         # Geospatial query: find documents near this point
-        nearby = writer.deviation_collection.find({
-            "location": {
-                "$near": {
-                    "$geometry": {
-                        "type": "Point",
-                        "coordinates": [-71.1425, 42.3954],
+        nearby = writer.deviation_collection.find(
+            {
+                "location": {
+                    "$near": {
+                        "$geometry": {
+                            "type": "Point",
+                            "coordinates": [-71.1425, 42.3954],
+                        },
+                        "$maxDistance": 1000,  # 1km
                     },
-                    "$maxDistance": 1000,  # 1km
                 },
-            },
-        })
+            }
+        )
         results = list(nearby)
         assert len(results) >= 1
         assert results[0]["vehicle_id"] == "GEO-V1"
@@ -277,7 +301,9 @@ class TestMongoDBPersistence:
         writer = MetricsWriter(mongo_uri=mongo_uri, db_name=db_name)
 
         dev = DeviationResult(
-            vehicle_id="NOLOC-V1", trip_id="NOLOC-T1", stop_sequence=1,
+            vehicle_id="NOLOC-V1",
+            trip_id="NOLOC-T1",
+            stop_sequence=1,
             kind="departure",
             scheduled_at=ets("2026-09-14 11:00:00"),
             actual_at=ets("2026-09-14 11:02:00"),
@@ -300,14 +326,19 @@ class TestMongoDBPersistence:
         writer = MetricsWriter(mongo_uri=mongo_uri, db_name=db_name)
 
         event = BunchingEvent(
-            route_id="PW-R1", direction_id=0,
-            vehicle_a="PW-A", vehicle_b="PW-B",
+            route_id="PW-R1",
+            direction_id=0,
+            vehicle_a="PW-A",
+            vehicle_b="PW-B",
             start_time=ets("2026-09-14 12:00:00"),
             end_time=ets("2026-09-14 12:00:45"),
-            observation_count=4, min_distance_meters=15.0,
+            observation_count=4,
+            min_distance_meters=15.0,
         )
         dev = DeviationResult(
-            vehicle_id="PW-V1", trip_id="PW-T1", stop_sequence=3,
+            vehicle_id="PW-V1",
+            trip_id="PW-T1",
+            stop_sequence=3,
             kind="arrival",
             scheduled_at=ets("2026-09-14 12:00:00"),
             actual_at=ets("2026-09-14 12:04:00"),
@@ -329,9 +360,11 @@ class TestMongoDBPersistence:
 
         writer.close()
 
+
 # ---------------------------------------------------------------------------
 # 3. End-to-end: Kafka produce -> consume -> process -> MongoDB persist
 # ---------------------------------------------------------------------------
+
 
 def _pick_scheduled_stop(static: GtfsStaticData):
     """Deterministically choose the (trip, stop_sequence) the e2e pings are
@@ -340,16 +373,21 @@ def _pick_scheduled_stop(static: GtfsStaticData):
     Past-midnight arrivals are skipped here because their anchoring behavior is
     covered by the fixture quirk tests, not this pipeline test."""
     for (trip_id, stop_sequence), scheduled in sorted(static.stop_times_lookup.items()):
-        if trip_id not in static.direction_lookup or trip_id not in static.trip_route_lookup:
+        if (
+            trip_id not in static.direction_lookup
+            or trip_id not in static.trip_route_lookup
+        ):
             continue
         if scheduled.arrival_time is None or scheduled.arrival_time >= 24 * 3600:
             continue
         stop_info = (
-            static.stops_lookup.get(scheduled.stop_id)
-            if scheduled.stop_id
-            else None
+            static.stops_lookup.get(scheduled.stop_id) if scheduled.stop_id else None
         )
-        if stop_info is None or stop_info.stop_lat is None or stop_info.stop_lon is None:
+        if (
+            stop_info is None
+            or stop_info.stop_lat is None
+            or stop_info.stop_lon is None
+        ):
             continue
         route_id = static.trip_route_lookup[trip_id]
         return trip_id, stop_sequence, scheduled, stop_info, route_id
@@ -368,7 +406,9 @@ class TestEndToEndPipeline:
     values and the enrichment (route name, GeoJSON location) the consumer
     attaches from the feed."""
 
-    def test_kafka_to_mongodb_pipeline(self, bootstrap_servers, mongo_uri, gtfs_fixture):
+    def test_kafka_to_mongodb_pipeline(
+        self, bootstrap_servers, mongo_uri, gtfs_fixture
+    ):
         topic = "integration-e2e-pipeline"
         db_name = "test_e2e"
 
@@ -378,7 +418,9 @@ class TestEndToEndPipeline:
         static = GtfsStaticData(feed_dir)
         static.load()
 
-        trip_id, stop_sequence, scheduled, stop_info, route_id = _pick_scheduled_stop(static)
+        trip_id, stop_sequence, scheduled, stop_info, route_id = _pick_scheduled_stop(
+            static
+        )
         route_name = static.routes_lookup.get(route_id)
         arrival_seconds = scheduled.arrival_time
         assert arrival_seconds is not None
@@ -431,12 +473,14 @@ class TestEndToEndPipeline:
             producer.produce(topic, json.dumps(ping).encode("utf-8"))
         producer.flush(timeout=10)
 
-        kafka_consumer = Consumer({
-            "bootstrap.servers": bootstrap_servers,
-            "group.id": "integration-e2e-group",
-            "auto.offset.reset": "earliest",
-            "enable.auto.commit": False,
-        })
+        kafka_consumer = Consumer(
+            {
+                "bootstrap.servers": bootstrap_servers,
+                "group.id": "integration-e2e-group",
+                "auto.offset.reset": "earliest",
+                "enable.auto.commit": False,
+            }
+        )
         kafka_consumer.subscribe([topic])
         consumed_pings = []
         deadline = time.time() + 15

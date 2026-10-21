@@ -18,6 +18,7 @@ from metrics.schedule_deviation import DeviationResult, ScheduledStopTime
 
 EASTERN = "America/New_York"
 
+
 def ets(time_str: str) -> pd.Timestamp:
     """Helper to generate timezone-aware timestamps for tests."""
     return pd.Timestamp(time_str, tz=EASTERN)
@@ -30,68 +31,99 @@ class TestBunchingEventTracker:
         and then an 'update' action as the end_time grows.
         """
         tracker = _BunchingEventTracker()
-        
+
         # Window 1: Event detected from 10:00:00 to 10:00:45
         event_w1 = BunchingEvent(
-            route_id="R1", direction_id=0, vehicle_a="A", vehicle_b="B",
-            start_time=ets("2026-08-18 10:00:00"), end_time=ets("2026-08-18 10:00:45"),
-            observation_count=4, min_distance_meters=15.0
+            route_id="R1",
+            direction_id=0,
+            vehicle_a="A",
+            vehicle_b="B",
+            start_time=ets("2026-08-18 10:00:00"),
+            end_time=ets("2026-08-18 10:00:45"),
+            observation_count=4,
+            min_distance_meters=15.0,
         )
-        actions_w1 = tracker.reconcile([event_w1], reference_time=ets("2026-08-18 10:00:45"))
-        
+        actions_w1 = tracker.reconcile(
+            [event_w1], reference_time=ets("2026-08-18 10:00:45")
+        )
+
         assert len(actions_w1) == 1
         assert actions_w1[0][0] == "new"
         assert actions_w1[0][1].end_time == ets("2026-08-18 10:00:45")
 
         # Window 2: Overlap catches it again, but now it lasts until 10:01:30
         event_w2 = BunchingEvent(
-            route_id="R1", direction_id=0, vehicle_a="A", vehicle_b="B",
-            start_time=ets("2026-08-18 10:00:15"), end_time=ets("2026-08-18 10:01:30"),
-            observation_count=6, min_distance_meters=12.0
+            route_id="R1",
+            direction_id=0,
+            vehicle_a="A",
+            vehicle_b="B",
+            start_time=ets("2026-08-18 10:00:15"),
+            end_time=ets("2026-08-18 10:01:30"),
+            observation_count=6,
+            min_distance_meters=12.0,
         )
-        actions_w2 = tracker.reconcile([event_w2], reference_time=ets("2026-08-18 10:01:30"))
-        
+        actions_w2 = tracker.reconcile(
+            [event_w2], reference_time=ets("2026-08-18 10:01:30")
+        )
+
         assert len(actions_w2) == 1
         assert actions_w2[0][0] == "update"
-        assert actions_w2[0][1].start_time == ets("2026-08-18 10:00:00") # Keeps original start
-        assert actions_w2[0][1].end_time == ets("2026-08-18 10:01:30")   # Updated end
+        assert actions_w2[0][1].start_time == ets(
+            "2026-08-18 10:00:00"
+        )  # Keeps original start
+        assert actions_w2[0][1].end_time == ets("2026-08-18 10:01:30")  # Updated end
 
     def test_separate_occurrence(self):
         """If the same pair bunches again much later, it should be a 'new' event."""
         tracker = _BunchingEventTracker()
-        
+
         event1 = BunchingEvent(
-            route_id="R1", direction_id=0, vehicle_a="A", vehicle_b="B",
-            start_time=ets("2026-08-18 10:00:00"), end_time=ets("2026-08-18 10:00:45"),
-            observation_count=4, min_distance_meters=15.0
+            route_id="R1",
+            direction_id=0,
+            vehicle_a="A",
+            vehicle_b="B",
+            start_time=ets("2026-08-18 10:00:00"),
+            end_time=ets("2026-08-18 10:00:45"),
+            observation_count=4,
+            min_distance_meters=15.0,
         )
         tracker.reconcile([event1], reference_time=ets("2026-08-18 10:00:45"))
-        
+
         # 30 minutes later...
         event2 = BunchingEvent(
-            route_id="R1", direction_id=0, vehicle_a="A", vehicle_b="B",
-            start_time=ets("2026-08-18 10:30:00"), end_time=ets("2026-08-18 10:30:30"),
-            observation_count=2, min_distance_meters=20.0
+            route_id="R1",
+            direction_id=0,
+            vehicle_a="A",
+            vehicle_b="B",
+            start_time=ets("2026-08-18 10:30:00"),
+            end_time=ets("2026-08-18 10:30:30"),
+            observation_count=2,
+            min_distance_meters=20.0,
         )
         actions = tracker.reconcile([event2], reference_time=ets("2026-08-18 10:30:30"))
-        
+
         assert len(actions) == 1
         assert actions[0][0] == "new"
 
     def test_identical_redetection(self):
         """If the exact same event is passed again without growth, ignore it."""
         tracker = _BunchingEventTracker()
-        
+
         event = BunchingEvent(
-            route_id="R1", direction_id=0, vehicle_a="A", vehicle_b="B",
-            start_time=ets("2026-08-18 10:00:00"), end_time=ets("2026-08-18 10:00:45"),
-            observation_count=4, min_distance_meters=15.0
+            route_id="R1",
+            direction_id=0,
+            vehicle_a="A",
+            vehicle_b="B",
+            start_time=ets("2026-08-18 10:00:00"),
+            end_time=ets("2026-08-18 10:00:45"),
+            observation_count=4,
+            min_distance_meters=15.0,
         )
-        
+
         # First time -> new
         actions1 = tracker.reconcile([event], reference_time=ets("2026-08-18 10:00:45"))
         assert len(actions1) == 1
-        
+
         # Second time exactly the same -> ignored (no-op)
         actions2 = tracker.reconcile([event], reference_time=ets("2026-08-18 10:00:45"))
         assert len(actions2) == 0
@@ -99,15 +131,20 @@ class TestBunchingEventTracker:
     def test_purge_on_empty(self):
         """Tracker should clean memory up even when no events happen."""
         tracker = _BunchingEventTracker(retention_seconds=100)
-        
+
         event = BunchingEvent(
-            route_id="R1", direction_id=0, vehicle_a="A", vehicle_b="B",
-            start_time=ets("2026-08-18 10:00:00"), end_time=ets("2026-08-18 10:00:00"),
-            observation_count=2, min_distance_meters=15.0
+            route_id="R1",
+            direction_id=0,
+            vehicle_a="A",
+            vehicle_b="B",
+            start_time=ets("2026-08-18 10:00:00"),
+            end_time=ets("2026-08-18 10:00:00"),
+            observation_count=2,
+            min_distance_meters=15.0,
         )
         tracker.reconcile([event], reference_time=ets("2026-08-18 10:00:00"))
         assert len(tracker._last_seen) == 1
-        
+
         # Simulate an empty window 300s later
         tracker.reconcile([], reference_time=ets("2026-08-18 10:05:00"))
         assert len(tracker._last_seen) == 0
@@ -116,24 +153,28 @@ class TestBunchingEventTracker:
 class TestDeviationResultTracker:
     def test_dedup_and_purge(self):
         tracker = _DeviationResultTracker(retention_seconds=100)
-        
+
         dev = DeviationResult(
-            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
-            deviation_seconds=300
+            vehicle_id="v1",
+            trip_id="t1",
+            stop_sequence=5,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:05:00"),
+            deviation_seconds=300,
         )
-        
+
         # 1. First time seen -> returns the item
         fresh = tracker.filter_new([dev], reference_time=ets("2026-08-18 10:05:00"))
         assert len(fresh) == 1
-        
+
         # 2. Seen again -> returns empty
         duplicate = tracker.filter_new([dev], reference_time=ets("2026-08-18 10:05:00"))
         assert len(duplicate) == 0
-        
+
         # 3. Time passes, cache purges
         tracker.filter_new([], reference_time=ets("2026-08-18 10:10:00"))
-        
+
         # 4. Seen again after purge -> returns as new again
         re_fresh = tracker.filter_new([dev], reference_time=ets("2026-08-18 10:10:00"))
         assert len(re_fresh) == 1
@@ -148,16 +189,18 @@ class TestPingWindowBuffer:
         base_time = ets("2026-08-18 10:00:00")
         for i in range(5):
             ping_time = base_time + pd.Timedelta(seconds=15 * i)
-            buffer.add({
-                "vehicle_id": "v1",
-                "timestamp": ping_time.strftime("%Y-%m-%d %H:%M:%S%z")
-            })
-            
+            buffer.add(
+                {
+                    "vehicle_id": "v1",
+                    "timestamp": ping_time.strftime("%Y-%m-%d %H:%M:%S%z"),
+                }
+            )
+
         df = buffer.flush()
-        
+
         # It should return all 5 rows for the current window
         assert len(df) == 5
-        
+
         # The internal state should now only hold the last 30 seconds (last 3 pings)
         assert len(buffer._rows) == 3
 
@@ -175,22 +218,22 @@ class TestAnalyticsConsumer:
         sink = MagicMock()
 
         consumer = AnalyticsConsumer(
-            kafka_config={"group.id": "test"},
-            topic="test",
-            on_window_result=sink
+            kafka_config={"group.id": "test"}, topic="test", on_window_result=sink
         )
 
         # Force bunching to crash
         mock_pairs.side_effect = Exception("Bunching Engine Failure")
         mock_arr.return_value = []
 
-        df = pd.DataFrame([
-            {
-                "stop_id": "1",
-                "timestamp_eastern": ets("2026-08-18 10:00:00"),
-                "current_status": "STOPPED_AT"
-            }
-        ])
+        df = pd.DataFrame(
+            [
+                {
+                    "stop_id": "1",
+                    "timestamp_eastern": ets("2026-08-18 10:00:00"),
+                    "current_status": "STOPPED_AT",
+                }
+            ]
+        )
 
         consumer._process_window(df)
 
@@ -198,33 +241,44 @@ class TestAnalyticsConsumer:
         # Proves the deviation path was actually reached and succeeded on its own,
         # not just that new_deviations happens to be [] for some other, unverified reason.
         mock_arr.assert_called_once()
-        
+
         # Inspect what was sent to the sink
         result: WindowResult = sink.call_args[0][0]
         assert result.bunching_actions == []
         assert isinstance(result.new_deviations, list)
+
     @patch("consumer.GtfsStaticData")
     @patch("consumer.find_close_pairs")
     @patch("consumer.compute_arrival_deviations")
-    def test_process_window_deviation_failure_does_not_affect_bunching(self, mock_arr, mock_pairs, MockGtfs):
+    def test_process_window_deviation_failure_does_not_affect_bunching(
+        self, mock_arr, mock_pairs, MockGtfs
+    ):
         sink = MagicMock()
-        consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"}, topic="test", on_window_result=sink
+        )
 
         mock_arr.side_effect = Exception("Deviation Engine Failure")
-        mock_pairs.return_value = pd.DataFrame()  # empty close_pairs -> detect_bunching_events returns []
+        mock_pairs.return_value = (
+            pd.DataFrame()
+        )  # empty close_pairs -> detect_bunching_events returns []
 
-        df = pd.DataFrame([{"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00")}])
+        df = pd.DataFrame(
+            [{"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00")}]
+        )
         consumer._process_window(df)
 
         result: WindowResult = sink.call_args[0][0]
-        assert result.bunching_actions == []      # ran cleanly, just had nothing to report
-        assert result.new_deviations == []        # failed and was caught
-        mock_pairs.assert_called_once()           # proves bunching's path actually executed
+        assert result.bunching_actions == []  # ran cleanly, just had nothing to report
+        assert result.new_deviations == []  # failed and was caught
+        mock_pairs.assert_called_once()  # proves bunching's path actually executed
 
     def test_process_window_empty_input_never_calls_sink(self):
         sink = MagicMock()
         with patch("consumer.GtfsStaticData"):
-            consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
+            consumer = AnalyticsConsumer(
+                kafka_config={"group.id": "test"}, topic="test", on_window_result=sink
+            )
 
         consumer._process_window(pd.DataFrame())
         sink.assert_not_called()
@@ -232,29 +286,49 @@ class TestAnalyticsConsumer:
     @patch("consumer.GtfsStaticData")
     @patch("consumer.find_close_pairs")
     @patch("consumer.compute_arrival_deviations")
-    def test_process_window_drops_deviations_exceeding_threshold(self, mock_arr, mock_pairs, MockGtfs):
+    def test_process_window_drops_deviations_exceeding_threshold(
+        self, mock_arr, mock_pairs, MockGtfs
+    ):
         """Deviations beyond ±MAX_DEVIATION_SECONDS should be filtered out."""
         from metrics.schedule_deviation import DeviationResult
 
         sink = MagicMock()
-        consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"}, topic="test", on_window_result=sink
+        )
         mock_pairs.return_value = pd.DataFrame()
 
         # One within threshold (5 min late), one beyond (45 min late)
         mock_arr.return_value = [
             DeviationResult(
-                vehicle_id="v1", trip_id="t1", stop_sequence=1, kind="arrival",
-                scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+                vehicle_id="v1",
+                trip_id="t1",
+                stop_sequence=1,
+                kind="arrival",
+                scheduled_at=ets("2026-08-18 10:00:00"),
+                actual_at=ets("2026-08-18 10:05:00"),
                 deviation_seconds=300,
             ),
             DeviationResult(
-                vehicle_id="v2", trip_id="t2", stop_sequence=1, kind="arrival",
-                scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:45:00"),
+                vehicle_id="v2",
+                trip_id="t2",
+                stop_sequence=1,
+                kind="arrival",
+                scheduled_at=ets("2026-08-18 10:00:00"),
+                actual_at=ets("2026-08-18 10:45:00"),
                 deviation_seconds=2700,
             ),
         ]
 
-        df = pd.DataFrame([{"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00"), "current_status": "STOPPED_AT"}])
+        df = pd.DataFrame(
+            [
+                {
+                    "stop_id": "1",
+                    "timestamp_eastern": ets("2026-08-18 10:00:00"),
+                    "current_status": "STOPPED_AT",
+                }
+            ]
+        )
         consumer._process_window(df)
 
         result: WindowResult = sink.call_args[0][0]
@@ -265,14 +339,28 @@ class TestAnalyticsConsumer:
     @patch("consumer.GtfsStaticData")
     @patch("consumer.find_close_pairs")
     @patch("consumer.compute_arrival_deviations")
-    def test_bunching_gets_full_pings_deviation_gets_scoped(self, mock_arr, mock_pairs, MockGtfs):
+    def test_bunching_gets_full_pings_deviation_gets_scoped(
+        self, mock_arr, mock_pairs, MockGtfs
+    ):
         sink = MagicMock()
-        consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"}, topic="test", on_window_result=sink
+        )
 
-        df = pd.DataFrame([
-            {"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00"), "current_status": "STOPPED_AT"},
-            {"stop_id": None, "timestamp_eastern": ets("2026-08-18 10:00:15"), "current_status": "IN_TRANSIT_TO"},
-        ])
+        df = pd.DataFrame(
+            [
+                {
+                    "stop_id": "1",
+                    "timestamp_eastern": ets("2026-08-18 10:00:00"),
+                    "current_status": "STOPPED_AT",
+                },
+                {
+                    "stop_id": None,
+                    "timestamp_eastern": ets("2026-08-18 10:00:15"),
+                    "current_status": "IN_TRANSIT_TO",
+                },
+            ]
+        )
 
         consumer._process_window(df)
 
@@ -293,16 +381,33 @@ class TestAnalyticsConsumer:
         self, mock_arr, mock_detect, mock_pairs, MockGtfs
     ):
         sink = MagicMock()
-        consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test", on_window_result=sink)
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"}, topic="test", on_window_result=sink
+        )
 
-        fake_event = BunchingEvent(route_id="R1", direction_id=0, vehicle_a="A", vehicle_b="B",
-                                    start_time=ets("2026-08-18 10:00:00"), end_time=ets("2026-08-18 10:00:45"),
-                                    observation_count=4, min_distance_meters=15.0)
+        fake_event = BunchingEvent(
+            route_id="R1",
+            direction_id=0,
+            vehicle_a="A",
+            vehicle_b="B",
+            start_time=ets("2026-08-18 10:00:00"),
+            end_time=ets("2026-08-18 10:00:45"),
+            observation_count=4,
+            min_distance_meters=15.0,
+        )
         mock_pairs.return_value = pd.DataFrame()
         mock_detect.return_value = [fake_event]
         mock_arr.return_value = []
 
-        df = pd.DataFrame([{"stop_id": "1", "timestamp_eastern": ets("2026-08-18 10:00:00"), "current_status": "STOPPED_AT"}])
+        df = pd.DataFrame(
+            [
+                {
+                    "stop_id": "1",
+                    "timestamp_eastern": ets("2026-08-18 10:00:00"),
+                    "current_status": "STOPPED_AT",
+                }
+            ]
+        )
         consumer._process_window(df)
 
         result: WindowResult = sink.call_args[0][0]
@@ -331,21 +436,31 @@ class TestLocationEnrichment:
 
     def test_enrichment_adds_geojson_when_stop_is_known(self):
         dev = DeviationResult(
-            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            vehicle_id="v1",
+            trip_id="t1",
+            stop_sequence=5,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:05:00"),
             deviation_seconds=300,
         )
         consumer = self._make_consumer_with_lookups(
             stop_times_lookup={
                 ("t1", 5): ScheduledStopTime(
-                    trip_id="t1", stop_sequence=5,
-                    arrival_time="10:00:00", departure_time=None,
+                    trip_id="t1",
+                    stop_sequence=5,
+                    arrival_time="10:00:00",
+                    departure_time=None,
                     stop_id="70001",
                 ),
             },
             stops_lookup={
-                "70001": StopInfo(stop_id="70001", stop_name="Alewife",
-                                  stop_lat=42.3954, stop_lon=-71.1425),
+                "70001": StopInfo(
+                    stop_id="70001",
+                    stop_name="Alewife",
+                    stop_lat=42.3954,
+                    stop_lon=-71.1425,
+                ),
             },
         )
 
@@ -363,15 +478,21 @@ class TestLocationEnrichment:
         """If ScheduledStopTime has no stop_id (column was missing from the
         GTFS bundle), the deviation is passed through unchanged."""
         dev = DeviationResult(
-            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            vehicle_id="v1",
+            trip_id="t1",
+            stop_sequence=5,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:05:00"),
             deviation_seconds=300,
         )
         consumer = self._make_consumer_with_lookups(
             stop_times_lookup={
                 ("t1", 5): ScheduledStopTime(
-                    trip_id="t1", stop_sequence=5,
-                    arrival_time="10:00:00", departure_time=None,
+                    trip_id="t1",
+                    stop_sequence=5,
+                    arrival_time="10:00:00",
+                    departure_time=None,
                     stop_id=None,
                 ),
             },
@@ -385,15 +506,21 @@ class TestLocationEnrichment:
         """If the stop_id exists in stop_times but the stop isn't in stops.txt
         (e.g. a removed stop), skip enrichment gracefully."""
         dev = DeviationResult(
-            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            vehicle_id="v1",
+            trip_id="t1",
+            stop_sequence=5,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:05:00"),
             deviation_seconds=300,
         )
         consumer = self._make_consumer_with_lookups(
             stop_times_lookup={
                 ("t1", 5): ScheduledStopTime(
-                    trip_id="t1", stop_sequence=5,
-                    arrival_time="10:00:00", departure_time=None,
+                    trip_id="t1",
+                    stop_sequence=5,
+                    arrival_time="10:00:00",
+                    departure_time=None,
                     stop_id="REMOVED_STOP",
                 ),
             },
@@ -407,21 +534,28 @@ class TestLocationEnrichment:
         """If the stop exists but has no lat/lon (e.g. a virtual/agency-level
         stop in GTFS), skip enrichment."""
         dev = DeviationResult(
-            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            vehicle_id="v1",
+            trip_id="t1",
+            stop_sequence=5,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:05:00"),
             deviation_seconds=300,
         )
         consumer = self._make_consumer_with_lookups(
             stop_times_lookup={
                 ("t1", 5): ScheduledStopTime(
-                    trip_id="t1", stop_sequence=5,
-                    arrival_time="10:00:00", departure_time=None,
+                    trip_id="t1",
+                    stop_sequence=5,
+                    arrival_time="10:00:00",
+                    departure_time=None,
                     stop_id="70001",
                 ),
             },
             stops_lookup={
-                "70001": StopInfo(stop_id="70001", stop_name="Virtual",
-                                  stop_lat=None, stop_lon=None),
+                "70001": StopInfo(
+                    stop_id="70001", stop_name="Virtual", stop_lat=None, stop_lon=None
+                ),
             },
         )
 
@@ -436,27 +570,41 @@ class TestLocationEnrichment:
         """Some deviations enrichable, some not -- only the right ones get
         location."""
         dev_ok = DeviationResult(
-            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            vehicle_id="v1",
+            trip_id="t1",
+            stop_sequence=5,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:05:00"),
             deviation_seconds=300,
         )
         dev_no_stop = DeviationResult(
-            vehicle_id="v2", trip_id="t2", stop_sequence=1, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:02:00"),
+            vehicle_id="v2",
+            trip_id="t2",
+            stop_sequence=1,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:02:00"),
             deviation_seconds=120,
         )
         consumer = self._make_consumer_with_lookups(
             stop_times_lookup={
                 ("t1", 5): ScheduledStopTime(
-                    trip_id="t1", stop_sequence=5,
-                    arrival_time="10:00:00", departure_time=None,
+                    trip_id="t1",
+                    stop_sequence=5,
+                    arrival_time="10:00:00",
+                    departure_time=None,
                     stop_id="70001",
                 ),
                 # ("t2", 1) not in lookup at all
             },
             stops_lookup={
-                "70001": StopInfo(stop_id="70001", stop_name="Alewife",
-                                  stop_lat=42.3954, stop_lon=-71.1425),
+                "70001": StopInfo(
+                    stop_id="70001",
+                    stop_name="Alewife",
+                    stop_lat=42.3954,
+                    stop_lon=-71.1425,
+                ),
             },
         )
 
@@ -490,8 +638,12 @@ class TestRouteNameEnrichment:
 
     def test_enrichment_adds_route_id_and_name(self):
         dev = DeviationResult(
-            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            vehicle_id="v1",
+            trip_id="t1",
+            stop_sequence=5,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:05:00"),
             deviation_seconds=300,
         )
         consumer = self._make_consumer_with_route_lookups(
@@ -511,8 +663,12 @@ class TestRouteNameEnrichment:
     def test_enrichment_sets_null_when_trip_not_in_lookup(self):
         """When trip_id has no matching route, both fields should be None."""
         dev = DeviationResult(
-            vehicle_id="v1", trip_id="unknown_trip", stop_sequence=5, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            vehicle_id="v1",
+            trip_id="unknown_trip",
+            stop_sequence=5,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:05:00"),
             deviation_seconds=300,
         )
         consumer = self._make_consumer_with_route_lookups(
@@ -528,8 +684,12 @@ class TestRouteNameEnrichment:
     def test_enrichment_sets_null_name_when_route_has_no_long_name(self):
         """When the route exists but has no route_long_name (e.g. shuttle)."""
         dev = DeviationResult(
-            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            vehicle_id="v1",
+            trip_id="t1",
+            stop_sequence=5,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:05:00"),
             deviation_seconds=300,
         )
         consumer = self._make_consumer_with_route_lookups(
@@ -549,13 +709,21 @@ class TestRouteNameEnrichment:
     def test_enrichment_mixed_results(self):
         """Some trips map to routes, some don't."""
         dev_known = DeviationResult(
-            vehicle_id="v1", trip_id="t1", stop_sequence=5, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:05:00"),
+            vehicle_id="v1",
+            trip_id="t1",
+            stop_sequence=5,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:05:00"),
             deviation_seconds=300,
         )
         dev_unknown = DeviationResult(
-            vehicle_id="v2", trip_id="t_unknown", stop_sequence=1, kind="arrival",
-            scheduled_at=ets("2026-08-18 10:00:00"), actual_at=ets("2026-08-18 10:02:00"),
+            vehicle_id="v2",
+            trip_id="t_unknown",
+            stop_sequence=1,
+            kind="arrival",
+            scheduled_at=ets("2026-08-18 10:00:00"),
+            actual_at=ets("2026-08-18 10:02:00"),
             deviation_seconds=120,
         )
         consumer = self._make_consumer_with_route_lookups(
@@ -576,12 +744,19 @@ class TestCommitGating:
     """Tests that AnalyticsConsumer.run() only commits Kafka offsets when
     persistence succeeds, which is the core of the at-least-once delivery guarantee."""
 
-    VALID_PING = json.dumps({
-        "vehicle_id": "v1", "trip_id": "t1", "route_id": "R1",
-        "lat": 42.0, "lon": -71.0, "stop_id": "s1",
-        "current_stop_sequence": 1, "current_status": "STOPPED_AT",
-        "timestamp": "2026-08-18 10:00:00",
-    }).encode()
+    VALID_PING = json.dumps(
+        {
+            "vehicle_id": "v1",
+            "trip_id": "t1",
+            "route_id": "R1",
+            "lat": 42.0,
+            "lon": -71.0,
+            "stop_id": "s1",
+            "current_stop_sequence": 1,
+            "current_status": "STOPPED_AT",
+            "timestamp": "2026-08-18 10:00:00",
+        }
+    ).encode()
 
     def _make_kafka_message(self, payload=VALID_PING):
         msg = MagicMock()
@@ -600,15 +775,19 @@ class TestCommitGating:
         mock_kafka = MockKafka.return_value
         mock_kafka.poll.side_effect = [
             self._make_kafka_message(),  # first poll: message -> buffer
-            KeyboardInterrupt,           # second poll: exit loop
+            KeyboardInterrupt,  # second poll: exit loop
         ]
         mock_pairs.return_value = pd.DataFrame()
         mock_detect.return_value = []
         mock_arr.return_value = []
 
-        sink = MagicMock(return_value={
-            "success": True, "bunching_written": 0, "deviations_written": 0,
-        })
+        sink = MagicMock(
+            return_value={
+                "success": True,
+                "bunching_written": 0,
+                "deviations_written": 0,
+            }
+        )
         consumer = AnalyticsConsumer(
             kafka_config={"group.id": "test"},
             topic="test",
@@ -638,9 +817,13 @@ class TestCommitGating:
         mock_detect.return_value = []
         mock_arr.return_value = []
 
-        sink = MagicMock(return_value={
-            "success": False, "bunching_written": 0, "deviations_written": 0,
-        })
+        sink = MagicMock(
+            return_value={
+                "success": False,
+                "bunching_written": 0,
+                "deviations_written": 0,
+            }
+        )
         consumer = AnalyticsConsumer(
             kafka_config={"group.id": "test"},
             topic="test",
@@ -659,7 +842,7 @@ class TestCommitGating:
         """Empty window -> _process_window returns None -> no commit."""
         mock_kafka = MockKafka.return_value
         mock_kafka.poll.side_effect = [
-            None,              # no message -> buffer stays empty
+            None,  # no message -> buffer stays empty
             KeyboardInterrupt,  # exit
         ]
 
@@ -691,12 +874,19 @@ class TestCommitGating:
 
         msg1 = self._make_kafka_message()
         msg2 = self._make_kafka_message(
-            json.dumps({
-                "vehicle_id": "v2", "trip_id": "t2", "route_id": "R1",
-                "lat": 42.0, "lon": -71.0, "stop_id": "s1",
-                "current_stop_sequence": 2, "current_status": "IN_TRANSIT_TO",
-                "timestamp": "2026-08-18 10:01:00",
-            }).encode()
+            json.dumps(
+                {
+                    "vehicle_id": "v2",
+                    "trip_id": "t2",
+                    "route_id": "R1",
+                    "lat": 42.0,
+                    "lon": -71.0,
+                    "stop_id": "s1",
+                    "current_stop_sequence": 2,
+                    "current_status": "IN_TRANSIT_TO",
+                    "timestamp": "2026-08-18 10:01:00",
+                }
+            ).encode()
         )
         # Window 1: message -> success -> commit
         # Window 2: message -> failure -> no commit
@@ -707,10 +897,12 @@ class TestCommitGating:
         mock_detect.return_value = []
         mock_arr.return_value = []
 
-        sink = MagicMock(side_effect=[
-            {"success": True, "bunching_written": 0, "deviations_written": 0},
-            {"success": False, "bunching_written": 0, "deviations_written": 0},
-        ])
+        sink = MagicMock(
+            side_effect=[
+                {"success": True, "bunching_written": 0, "deviations_written": 0},
+                {"success": False, "bunching_written": 0, "deviations_written": 0},
+            ]
+        )
         consumer = AnalyticsConsumer(
             kafka_config={"group.id": "test"},
             topic="test",
@@ -748,12 +940,19 @@ class TestPersistBackoff:
     The consumer should back off from persist attempts with increasing delays,
     while continuing to poll Kafka to maintain consumer-group membership."""
 
-    VALID_PING = json.dumps({
-        "vehicle_id": "v1", "trip_id": "t1", "route_id": "R1",
-        "lat": 42.0, "lon": -71.0, "stop_id": "s1",
-        "current_stop_sequence": 1, "current_status": "STOPPED_AT",
-        "timestamp": "2026-08-18 10:00:00",
-    }).encode()
+    VALID_PING = json.dumps(
+        {
+            "vehicle_id": "v1",
+            "trip_id": "t1",
+            "route_id": "R1",
+            "lat": 42.0,
+            "lon": -71.0,
+            "stop_id": "s1",
+            "current_stop_sequence": 1,
+            "current_status": "STOPPED_AT",
+            "timestamp": "2026-08-18 10:00:00",
+        }
+    ).encode()
 
     def _make_kafka_message(self):
         msg = MagicMock()
@@ -862,9 +1061,13 @@ class TestPersistBackoff:
         mock_detect.return_value = []
         mock_arr.return_value = []
 
-        sink = MagicMock(return_value={
-            "success": False, "bunching_written": 0, "deviations_written": 0,
-        })
+        sink = MagicMock(
+            return_value={
+                "success": False,
+                "bunching_written": 0,
+                "deviations_written": 0,
+            }
+        )
         consumer = AnalyticsConsumer(
             kafka_config={"group.id": "test"},
             topic="test",

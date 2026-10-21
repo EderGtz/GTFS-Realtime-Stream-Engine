@@ -8,16 +8,15 @@ target directory so tests are fully isolated from the real data/ directory.
 import io
 import zipfile
 
-import pytest
 import requests
 from urllib3.response import HTTPResponse as Urllib3HTTPResponse
 
 from gtfs_static.refresh import download_and_extract_gtfs
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_head_response(etag: str = '"abc123"', status: int = 200):
     """Build a mock requests.Response for the HEAD request."""
@@ -62,6 +61,7 @@ def _make_get_response(content: bytes, status: int = 200):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestETagCaching:
     """ETag-based conditional fetch: skip download when remote hasn't changed."""
@@ -139,10 +139,12 @@ class TestDownloadAndExtract:
 
     def test_extracts_files_to_target_directory(self, tmp_path, monkeypatch):
         """Downloaded ZIP contents should appear in target_dir."""
-        zip_content = _make_zip_bytes({
-            "trips.txt": "trip_id,route_id\n1,Red\n",
-            "stops.txt": "stop_id,stop_name\n70001,Alewife\n",
-        })
+        zip_content = _make_zip_bytes(
+            {
+                "trips.txt": "trip_id,route_id\n1,Red\n",
+                "stops.txt": "stop_id,stop_name\n70001,Alewife\n",
+            }
+        )
 
         monkeypatch.setattr(
             "gtfs_static.refresh.requests.head",

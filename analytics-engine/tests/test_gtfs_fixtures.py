@@ -1,7 +1,7 @@
 """
 Loader tests against the curated real-world GTFS fixtures.
 
-Unlike test_loader.py, these load the fixture feeds from 
+Unlike test_loader.py, these load the fixture feeds from
 tests/fixtures/gtfs/ and verify the loader handles
 the quirks real feeds are known to contain, gracefully:
 
@@ -21,13 +21,13 @@ from __future__ import annotations
 import re
 
 import pytest
-
 from gtfs_fixtures import (
     ALL_FIXTURES,
     FIXTURES_DIR,
     MAX_FIXTURE_BYTES,
     read_rows,
 )
+
 from gtfs_static.loader import GtfsStaticData
 from metrics.schedule_deviation import gtfs_time_to_seconds
 
@@ -118,9 +118,7 @@ class TestBrokenCoordinateQuirk:
     def test_blank_coordinate_stops_load_with_none_coordinates(self, gtfs_fixture):
         feed_dir = gtfs_fixture("mbta-2019-07-25")
         raw_stops = read_rows(feed_dir, "stops.txt")
-        blank_ids = {
-            row["stop_id"] for row in raw_stops if not row["stop_lat"].strip()
-        }
+        blank_ids = {row["stop_id"] for row in raw_stops if not row["stop_lat"].strip()}
         assert blank_ids  # fixture must keep the quirk density (1147 rows)
         assert len(blank_ids) == 1147
 
@@ -139,7 +137,8 @@ class TestBrokenCoordinateQuirk:
         data.load()
 
         located = [
-            s for s in data.stops_lookup.values()
+            s
+            for s in data.stops_lookup.values()
             if s.stop_lat is not None and s.stop_lon is not None
         ]
         assert located
