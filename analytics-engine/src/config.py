@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 @dataclass(frozen=True)
 class AppConfig:
     kafka_brokers: str
@@ -24,9 +25,15 @@ class AppConfig:
                 kafka_topic=os.getenv("KAFKA_TOPIC", "raw.vehicle-positions"),
                 kafka_group_id=os.getenv("KAFKA_GROUP_ID", "analytics-engine"),
                 mongo_uri=os.environ["MONGO_URI"],
-                mongo_retry_base_seconds=float(os.getenv("MONGO_RETRY_BASE_SECONDS", "1")),
-                mongo_retry_max_seconds=float(os.getenv("MONGO_RETRY_MAX_SECONDS", "60")),
-                mongo_retry_jitter_seconds=float(os.getenv("MONGO_RETRY_JITTER_SECONDS", "1")),
+                mongo_retry_base_seconds=float(
+                    os.getenv("MONGO_RETRY_BASE_SECONDS", "1")
+                ),
+                mongo_retry_max_seconds=float(
+                    os.getenv("MONGO_RETRY_MAX_SECONDS", "60")
+                ),
+                mongo_retry_jitter_seconds=float(
+                    os.getenv("MONGO_RETRY_JITTER_SECONDS", "1")
+                ),
                 pg_dsn=os.environ["PG_DSN"],
             )
         except KeyError as e:

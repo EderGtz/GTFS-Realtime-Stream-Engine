@@ -6,6 +6,7 @@ the HourlyAccumulator and queried by the API's GET /v1/routes/:id/history
 endpoint. One row per (route_id, hour), upserted on conflict so the
 same hour can be re-written if the analytics engine restarts mid-hour.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -26,16 +27,19 @@ CREATE TABLE IF NOT EXISTS route_hourly_stats (
 );
 """
 
+
 @dataclass(frozen=True)
 class HourlyStats:
     """One row in route_hourly_stats. Produced by HourlyAccumulator.flush()."""
+
     route_id: str
-    hour: datetime           # truncated to hour boundary, timezone-aware
-    avg_deviation: float     # mean |deviation_seconds| for the hour
-    p95_deviation: float     # 95th percentile |deviation_seconds|
-    vehicle_count: int       # distinct vehicles observed
-    on_time_pct: float       # % of deviations within ±3 min (APTA standard)
-    bunching_events: int     # new bunching events first detected this hour
+    hour: datetime  # truncated to hour boundary, timezone-aware
+    avg_deviation: float  # mean |deviation_seconds| for the hour
+    p95_deviation: float  # 95th percentile |deviation_seconds|
+    vehicle_count: int  # distinct vehicles observed
+    on_time_pct: float  # % of deviations within ±3 min (APTA standard)
+    bunching_events: int  # new bunching events first detected this hour
+
 
 # Index for the history query.
 # Without it, every GET /v1/routes/:id/history does a sequential scan

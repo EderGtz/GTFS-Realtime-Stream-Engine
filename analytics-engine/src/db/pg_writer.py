@@ -18,6 +18,7 @@ Why accumulate in memory instead of SQL accumulation:
 - The upsert is a single clean write per route per hour, not a complex
   ON CONFLICT DO UPDATE with weighted-average formulas.
 """
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -43,20 +44,23 @@ logger = get_logger("analytics-engine.pg_writer")
 
 ON_TIME_THRESHOLD_SECONDS = 180
 
+
 def _compute_p95(sorted_values: list[float]) -> float:
-    """Nearest-rank percentile (same algorithm as routePerformance.ts).
+    """Linear-interpolation percentile (same algorithm as routePerformance.ts).
     Input must be sorted ascending. Returns 0 for an empty list."""
     if not sorted_values:
         return 0.0
     if len(sorted_values) == 1:
         return sorted_values[0]
-    
+
     float_index = 0.95 * (len(sorted_values) - 1)
     lower_index = max(0, int(float_index))
     upper_index = min(len(sorted_values) - 1, lower_index + 1)
     weight = float_index - lower_index
 
-    return sorted_values[lower_index] * (1 - weight) + sorted_values[upper_index] * weight
+    return (
+        sorted_values[lower_index] * (1 - weight) + sorted_values[upper_index] * weight
+    )
 
 
 class HourlyAccumulator:
@@ -79,13 +83,15 @@ class HourlyAccumulator:
         # vehicle_ids: set of distinct vehicles (for vehicle_count)
         # on_time_count / total_count: for on_time_pct
         # new_bunching: count of "new" bunching actions only
-        self._route_data: dict[str, dict] = defaultdict(lambda: {
-            "deviations": [],
-            "vehicle_ids": set(),
-            "on_time_count": 0,
-            "total_count": 0,
-            "new_bunching": 0,
-        })
+        self._route_data: dict[str, dict] = defaultdict(
+            lambda: {
+                "deviations": [],
+                "vehicle_ids": set(),
+                "on_time_count": 0,
+                "total_count": 0,
+                "new_bunching": 0,
+            }
+        )
 
     def accumulate(self, result: WindowResult) -> None:
         """Feed one window's results into the accumulator.
@@ -153,20 +159,25 @@ class HourlyAccumulator:
             sorted_devs = sorted(data["deviations"])
             total = data["total_count"]
 
-            stats.append(HourlyStats(
-                route_id=route_id,
-                hour=hour,
-                avg_deviation=(sum(sorted_devs) / total) if total > 0 else 0.0,
-                p95_deviation=_compute_p95(sorted_devs),
-                vehicle_count=len(data["vehicle_ids"]),
-                on_time_pct=round((data["on_time_count"] / total) * 100, 1) if total > 0 else 0.0,
-                bunching_events=data["new_bunching"],
-            ))
+            stats.append(
+                HourlyStats(
+                    route_id=route_id,
+                    hour=hour,
+                    avg_deviation=(sum(sorted_devs) / total) if total > 0 else 0.0,
+                    p95_deviation=_compute_p95(sorted_devs),
+                    vehicle_count=len(data["vehicle_ids"]),
+                    on_time_pct=round((data["on_time_count"] / total) * 100, 1)
+                    if total > 0
+                    else 0.0,
+                    bunching_events=data["new_bunching"],
+                )
+            )
 
         self._route_data.clear()
         logger.info(
             "Flushed %d route(s) for hour %s to PostgreSQL accumulator",
-            len(stats), hour.isoformat(),
+            len(stats),
+            hour.isoformat(),
         )
         return stats
 
@@ -229,8 +240,15 @@ class PgWriter:
         """
 
         rows = [
-            (s.route_id, s.hour, s.avg_deviation, s.p95_deviation,
-             s.vehicle_count, s.on_time_pct, s.bunching_events)
+            (
+                s.route_id,
+                s.hour,
+                s.avg_deviation,
+                s.p95_deviation,
+                s.vehicle_count,
+                s.on_time_pct,
+                s.bunching_events,
+            )
             for s in stats
         ]
 

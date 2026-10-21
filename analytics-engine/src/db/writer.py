@@ -13,16 +13,16 @@ if two vehicles have a bunching event at 10:00 and are still bunched at 10:05, t
 be 5 records on the database, but only one that have been updated.
 
 - Bunching events: natural key (route_id, direction_id, vehicle_a, vehicle_b,
-  start_time). We explicitly include `start_time` in the database key—unlike the 
-  in-memory tracker—so that if the same two vehicles bunch, separate, and 
-  coincidentally bunch again hours later, the new incident creates a separate 
-  document rather than silently overwriting the earlier one. `start_time` is 
-  stable across "update" actions specifically because _BunchingEventTracker 
-  (consumer.py) preserves first_seen_start_time rather than letting it drift 
-  per window. This fix is the prerequisite that makes this a safe natural key 
-  to upsert on at all. An "update" action overwrites the existing document's 
-  end_time/observation_count/min_distance_meters in place, rather than creating 
-  a new document per update. Chosen for MVP simplicity, matching the goal of 
+  start_time). We explicitly include `start_time` in the database key—unlike the
+  in-memory tracker—so that if the same two vehicles bunch, separate, and
+  coincidentally bunch again hours later, the new incident creates a separate
+  document rather than silently overwriting the earlier one. `start_time` is
+  stable across "update" actions specifically because _BunchingEventTracker
+  (consumer.py) preserves first_seen_start_time rather than letting it drift
+  per window. This fix is the prerequisite that makes this a safe natural key
+  to upsert on at all. An "update" action overwrites the existing document's
+  end_time/observation_count/min_distance_meters in place, rather than creating
+  a new document per update. Chosen for MVP simplicity, matching the goal of
   serving CURRENT bunching status (README Phase 4: GET /v1/delays/live). A
   full audit history of every intermediate update is real future work, not
   required for that goal.
@@ -44,6 +44,7 @@ documents are NOT enriched -- a vehicle pair has no single natural location,
 and no planned endpoint requires it. This can be revisited if bottleneck
 clustering (Future Work) needs it.
 """
+
 from __future__ import annotations
 
 import time
@@ -67,16 +68,13 @@ DEVIATION_COLLECTION = "schedule_deviations"
 
 
 def _connect_with_retry(
-        mongo_uri: str, 
-        attempts: int = 5, 
-        delay_seconds: float = 3.0
-    ) -> MongoClient:
+    mongo_uri: str, attempts: int = 5, delay_seconds: float = 3.0
+) -> MongoClient:
     """Same retry shape as producer.ts's connectWithRetry / setupKafka on the TS
     side: fail loud after exhausting attempts, don't retry forever silently."""
 
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
-
         try:
             client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
             client.admin.command("ping")  # forces an actual connection
@@ -88,22 +86,26 @@ def _connect_with_retry(
             if attempt == attempts:
                 break
 
-            logger.warning("Mongo connect failed (attempt %d/%d), retrying...", attempt, attempts)
+            logger.warning(
+                "Mongo connect failed (attempt %d/%d), retrying...", attempt, attempts
+            )
             time.sleep(delay_seconds)
 
-    raise ConnectionError(f"Could not connect to MongoDB after {attempts} attempts") from last_error
+    raise ConnectionError(
+        f"Could not connect to MongoDB after {attempts} attempts"
+    ) from last_error
 
 
 def build_bunching_operations(
-        actions: list[tuple[str, BunchingEvent]]
-    ) -> list[UpdateOne]:
+    actions: list[tuple[str, BunchingEvent]],
+) -> list[UpdateOne]:
     """
     Pure function: turns (action, event) pairs into upsert operations, with no
     I/O. Kept separate from MetricsWriter.write_bunching_actions() specifically so
     the key/document shape can be unit-tested without a live MongoDB connection.
     same separation-of-concerns pattern as poller.ts's fetchFeedBuffer/decodeFeed
     split, or bunching.py's pure functions vs. consumer.py's I/O wrapper.
-    Bunching detection evaluates whether two vehicles on the same route are too close together. 
+    Bunching detection evaluates whether two vehicles on the same route are too close together.
 
     Both "new" and "update" actions produce the identical upsert, and the
     distinction only matters for logging, not for how the write itself behaves,
@@ -135,9 +137,9 @@ def build_deviation_operations(results: list[DeviationResult]) -> list[UpdateOne
     """
     Pure function, same reasoning as build_bunching_operations() above.
 
-    Schedule deviation determines whether a vehicle is running late or 
-    early, and by how much.  This metric is computed by comparing a 
-    vehicle's actual position and timestamp against its scheduled 
+    Schedule deviation determines whether a vehicle is running late or
+    early, and by how much.  This metric is computed by comparing a
+    vehicle's actual position and timestamp against its scheduled
     stop time.
     """
     operations = []
@@ -175,10 +177,12 @@ def build_deviation_operations(results: list[DeviationResult]) -> list[UpdateOne
 
     return operations
 
+
 class PersistWindowResult(TypedDict):
     bunching_written: int
     deviations_written: int
     success: bool
+
 
 class MetricsWriter:
     """
@@ -207,14 +211,23 @@ class MetricsWriter:
         # Natural-key uniqueness enforced at the database level, not relied on
         # via the in-memory trackers alone, which reset on every consumer restart.
         self.bunching_collection.create_index(
-            [("route_id", ASCENDING), ("direction_id", ASCENDING),
-             ("vehicle_a", ASCENDING), ("vehicle_b", ASCENDING), ("start_time", ASCENDING)],
+            [
+                ("route_id", ASCENDING),
+                ("direction_id", ASCENDING),
+                ("vehicle_a", ASCENDING),
+                ("vehicle_b", ASCENDING),
+                ("start_time", ASCENDING),
+            ],
             unique=True,
             name="bunching_natural_key",
         )
         self.deviation_collection.create_index(
-            [("vehicle_id", ASCENDING), ("trip_id", ASCENDING),
-             ("stop_sequence", ASCENDING), ("kind", ASCENDING)],
+            [
+                ("vehicle_id", ASCENDING),
+                ("trip_id", ASCENDING),
+                ("stop_sequence", ASCENDING),
+                ("kind", ASCENDING),
+            ],
             unique=True,
             name="deviation_natural_key",
         )
@@ -257,7 +270,7 @@ class MetricsWriter:
 
         if not actions:
             return 0
-        
+
         operations = build_bunching_operations(actions)
 
         try:
@@ -268,7 +281,9 @@ class MetricsWriter:
             return len(operations)
 
         except PyMongoError:
-            logger.exception("Failed to write %d bunching action(s) to MongoDB.", len(actions))
+            logger.exception(
+                "Failed to write %d bunching action(s) to MongoDB.", len(actions)
+            )
             return 0
 
     def write_deviation_results(self, results: list[DeviationResult]) -> int:
@@ -279,7 +294,9 @@ class MetricsWriter:
             self.deviation_collection.bulk_write(operations, ordered=False)
             return len(operations)
         except PyMongoError:
-            logger.exception("Failed to write %d deviation result(s) to MongoDB.", len(results))
+            logger.exception(
+                "Failed to write %d deviation result(s) to MongoDB.", len(results)
+            )
             return 0
 
     def persist_window(self, result: WindowResult) -> PersistWindowResult:
@@ -288,11 +305,12 @@ class MetricsWriter:
 
         bunching_written = self.write_bunching_actions(result.bunching_actions)
         deviation_written = self.write_deviation_results(result.new_deviations)
-        
+
         return {
             "bunching_written": bunching_written,
             "deviations_written": deviation_written,
-            "success": (bunching_written == bunching_total) and (deviation_written == deviation_total)
+            "success": (bunching_written == bunching_total)
+            and (deviation_written == deviation_total),
         }
 
     def close(self) -> None:

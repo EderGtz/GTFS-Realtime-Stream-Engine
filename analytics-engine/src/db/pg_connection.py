@@ -37,7 +37,8 @@ def connect_pg_with_retry(
                 break
             logger.warning(
                 "PostgreSQL connect failed (attempt %d/%d), retrying...",
-                attempt, attempts,
+                attempt,
+                attempts,
             )
             time.sleep(delay_seconds)
 

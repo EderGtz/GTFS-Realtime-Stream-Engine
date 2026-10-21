@@ -7,18 +7,18 @@ Live consumer which wires together raw.vehicle-positions telemetry, GTFS-static 
 WINDOWING STRATEGY EXPLANATION: TIME-WINDOWED WITH OVERLAP
 ================================================
 The notebooks operated on one fully-collected DataFrame, which was recolected in a limited
-amount of time. A live consumer, like this is supposed to work, has to decide how to batch 
-streaming pings before either metrics module (both expect a DataFrame, not a single message), 
+amount of time. A live consumer, like this is supposed to work, has to decide how to batch
+streaming pings before either metrics module (both expect a DataFrame, not a single message),
 and this choice directly affects correctness, beside implementation convenience.
 
 Two alternatives were considered and rejected due their implications:
 
 - Pure time-windowed with no overlap: accumulate pings for WINDOW_SECONDS, process,
-  discard, repeat. This is a simple alternative, but it could actively break bunching's 
-  persistence check. A real bunching event that starts near the end of one window and 
-  continues into the next gets its observations split across two batches, and neither 
-  of them may contain enough consecutive observations on its own to cross the 
-  MIN_CONSECUTIVE_OBSERVATIONS. So, a genuine sustained event can be silently missed 
+  discard, repeat. This is a simple alternative, but it could actively break bunching's
+  persistence check. A real bunching event that starts near the end of one window and
+  continues into the next gets its observations split across two batches, and neither
+  of them may contain enough consecutive observations on its own to cross the
+  MIN_CONSECUTIVE_OBSERVATIONS. So, a genuine sustained event can be silently missed
   entirely at the boundary.
 
 - Count-windowed: accumulate until N amount messages arrive. Adapts to fleet-size changes
@@ -26,15 +26,15 @@ Two alternatives were considered and rejected due their implications:
   it's still a hard cut, just triggered by count instead of time. It could also produce
   delayed results depending on the time the information is recolected.
 
-The strategy chosen is WINDOWED WITH OVERLAP, which actually fixes the missed-event problem: 
-each window's PROCESSING data is the last OVERLAP_SECONDS of the previous window's pings, plus 
+The strategy chosen is WINDOWED WITH OVERLAP, which actually fixes the missed-event problem:
+each window's PROCESSING data is the last OVERLAP_SECONDS of the previous window's pings, plus
 all of this window's new pings. A boundary-crossing event is now visible in full, in whichever
 window has accumulated enough of it to cross the persistence threshold.
 
 But the overlap alone created a brand new problem: since the overlapping pings get reprocessed,
 an event that was already fully detected using the overlap-extended window can
 easily still be sitting inside the CARRY-FORWARD buffer for the window after that
-too, and this wold cause a re-run detect_bunching_events over the same observations, which can cause
+too, and this would cause a re-run detect_bunching_events over the same observations, which can cause
 that the identical event is emitted a second time, as if it were new.
 
 This was fixed with a small in-memory dedup/update layer (_BunchingEventTracker below), keyed
@@ -66,8 +66,9 @@ below (OVERLAP_SECONDS=30) is exactly 2x bunching's own MIN_CONSECUTIVE_OBSERVAT
 * POLL_INTERVAL_SECONDS (2 * 15 = 30), which is the minimum safe value, not one with
 extra margin. This would be worth revisiting with real production data the same way every other
 threshold in this project was (notebook 04's sensitivity sweep, notebook 01's
-incident-fraction threshold), rather than just treated it as a final decition.
+incident-fraction threshold), rather than just treated it as a final decision.
 """
+
 from __future__ import annotations
 
 import gc
@@ -123,7 +124,7 @@ MAX_DEVIATION_SECONDS = 30 * 60  # 30 minutes
 class PingWindowBuffer:
     """
     Accumulates incoming pings and produces the (carry-forward + new data) batch
-    each window should be processed against. Take a look at the the windowing 
+    each window should be processed against. Take a look at the the windowing
     strategy in this module's docstring for why the carry-forward exists.
     """
 
@@ -148,11 +149,14 @@ class PingWindowBuffer:
         # modules need an Eastern-timezone column, so we create it here.
         df["timestamp_eastern"] = df["timestamp"].apply(to_eastern)
 
-        cutoff = df["timestamp_eastern"].max() - pd.Timedelta(seconds=self.overlap_seconds)
+        cutoff = df["timestamp_eastern"].max() - pd.Timedelta(
+            seconds=self.overlap_seconds
+        )
         carry_forward = df[df["timestamp_eastern"] >= cutoff]
         self._rows = carry_forward.to_dict("records")
 
         return df
+
 
 class _BunchingEventTracker:
     """
@@ -166,17 +170,17 @@ class _BunchingEventTracker:
 
     def _key(self, event: BunchingEvent) -> tuple:
         return (
-            event.route_id, 
-            event.direction_id, 
-            event.vehicle_a, 
+            event.route_id,
+            event.direction_id,
+            event.vehicle_a,
             event.vehicle_b,
-            )
+        )
 
     def reconcile(
-            self, 
-            events: list[BunchingEvent],
-            reference_time: pd.Timestamp,
-        ) -> list[tuple[str, BunchingEvent]]:
+        self,
+        events: list[BunchingEvent],
+        reference_time: pd.Timestamp,
+    ) -> list[tuple[str, BunchingEvent]]:
         """
         Returns [(action, event), ...] where action is "new" or "update".
         The event key identifies the vehicle pair; temporal continuity determines
@@ -193,10 +197,8 @@ class _BunchingEventTracker:
                 self._last_seen[key] = event
                 continue
 
-            is_continuation = (
-                event.start_time
-                <= previous.end_time
-                + pd.Timedelta(seconds=POLL_INTERVAL_SECONDS)
+            is_continuation = event.start_time <= previous.end_time + pd.Timedelta(
+                seconds=POLL_INTERVAL_SECONDS
             )
 
             if is_continuation and event.end_time > previous.end_time:
@@ -208,7 +210,9 @@ class _BunchingEventTracker:
                     start_time=min(previous.start_time, event.start_time),
                     end_time=event.end_time,
                     observation_count=event.observation_count,
-                    min_distance_meters=min(previous.min_distance_meters, event.min_distance_meters),
+                    min_distance_meters=min(
+                        previous.min_distance_meters, event.min_distance_meters
+                    ),
                 )
 
                 actions.append(("update", updated_event))
@@ -327,7 +331,8 @@ class AnalyticsConsumer:
     def _default_sink(self, result: WindowResult) -> dict[str, bool]:
         logger.info(
             "Window produced %d bunching action(s), %d new deviation result(s)",
-            len(result.bunching_actions), len(result.new_deviations),
+            len(result.bunching_actions),
+            len(result.new_deviations),
         )
         return {"success": True}
 
@@ -337,14 +342,15 @@ class AnalyticsConsumer:
     def _enter_backoff(self) -> None:
         delay = min(
             self._retry_max_seconds,
-            self._retry_base_seconds * (2 ** self._consecutive_failures),
+            self._retry_base_seconds * (2**self._consecutive_failures),
         )
         delay += random.uniform(0, self._retry_jitter_seconds)
         self._backoff_until = time.time() + delay
         self._consecutive_failures += 1
         logger.warning(
             "MongoDB persist failed (attempt %d). Backing off for %.1fs before retry.",
-            self._consecutive_failures, delay,
+            self._consecutive_failures,
+            delay,
         )
 
     def _reset_backoff(self) -> None:
@@ -379,7 +385,9 @@ class AnalyticsConsumer:
             # Atomic-replace design in loader.py means the previous, valid
             # snapshot is untouched. Logged and keep serving it rather than
             # crashing the whole consumer over one bad refresh attempt.
-            logger.error("GTFS-static refresh failed, continuing with previous snapshot: %s", err)
+            logger.error(
+                "GTFS-static refresh failed, continuing with previous snapshot: %s", err
+            )
 
     def _enrich_with_location(
         self, deviations: list[DeviationResult]
@@ -399,7 +407,11 @@ class AnalyticsConsumer:
                 continue
 
             stop_info = self.static_data.stops_lookup.get(scheduled.stop_id)
-            if stop_info is None or stop_info.stop_lat is None or stop_info.stop_lon is None:
+            if (
+                stop_info is None
+                or stop_info.stop_lat is None
+                or stop_info.stop_lon is None
+            ):
                 enriched.append(dev)
                 continue
 
@@ -429,10 +441,9 @@ class AnalyticsConsumer:
         return enriched
 
     def _process_window(
-            self, 
-            pings: pd.DataFrame
-        ) -> PersistWindowResult | dict[str, bool] | None:
-        
+        self, pings: pd.DataFrame
+    ) -> PersistWindowResult | dict[str, bool] | None:
+
         if pings.empty:
             return None
         total_records = len(pings)
@@ -443,10 +454,18 @@ class AnalyticsConsumer:
         if "location" in pings.columns:
             pings = pings.copy()
             pings["lat"] = pings["location"].apply(
-                lambda loc: loc["coordinates"][1] if isinstance(loc, dict) and "coordinates" in loc else None
+                lambda loc: (
+                    loc["coordinates"][1]
+                    if isinstance(loc, dict) and "coordinates" in loc
+                    else None
+                )
             )
             pings["lon"] = pings["location"].apply(
-                lambda loc: loc["coordinates"][0] if isinstance(loc, dict) and "coordinates" in loc else None
+                lambda loc: (
+                    loc["coordinates"][0]
+                    if isinstance(loc, dict) and "coordinates" in loc
+                    else None
+                )
             )
 
         scoped = pings[pings["stop_id"].notna()].copy()  # notebook 02, Section C
@@ -460,13 +479,17 @@ class AnalyticsConsumer:
                 bunching_events,
                 reference_time,
             )
-            
+
         except Exception:
-            logger.exception("Bunching computation failed for this window, skipping it.")
+            logger.exception(
+                "Bunching computation failed for this window, skipping it."
+            )
             bunching_actions = []
 
         try:
-            arrival_results = compute_arrival_deviations(scoped, self.static_data.stop_times_lookup)
+            arrival_results = compute_arrival_deviations(
+                scoped, self.static_data.stop_times_lookup
+            )
 
             # Departure deviations disabled — compute_departure_deviations() uses
             # "last STOPPED_AT ping before transitioning away" as a proxy for the
@@ -487,14 +510,16 @@ class AnalyticsConsumer:
             # indicate schedule-matching bugs, not real lateness.
             before_filter = len(arrival_results)
             arrival_results = [
-                r for r in arrival_results
+                r
+                for r in arrival_results
                 if abs(r.deviation_seconds) <= MAX_DEVIATION_SECONDS
             ]
             dropped = before_filter - len(arrival_results)
             if dropped:
                 logger.info(
                     "Dropped %d deviation(s) exceeding ±%d min threshold.",
-                    dropped, MAX_DEVIATION_SECONDS // 60,
+                    dropped,
+                    MAX_DEVIATION_SECONDS // 60,
                 )
 
             new_deviations = self.deviation_tracker.filter_new(
@@ -504,7 +529,9 @@ class AnalyticsConsumer:
             new_deviations = self._enrich_with_location(new_deviations)
             new_deviations = self._enrich_with_route_name(new_deviations)
         except Exception:
-            logger.exception("Schedule-deviation computation failed for this window, skipping it.")
+            logger.exception(
+                "Schedule-deviation computation failed for this window, skipping it."
+            )
             new_deviations = []
 
         result = self.on_window_result(
@@ -512,8 +539,8 @@ class AnalyticsConsumer:
                 bunching_actions=bunching_actions,
                 new_deviations=new_deviations,
                 total_records=total_records,
-                )
             )
+        )
 
         # Explicit DataFrame cleanup. CPython's refcount GC handles most
         # of this, but pandas internals can create reference cycles that
@@ -527,9 +554,9 @@ class AnalyticsConsumer:
         self.consumer.subscribe([self.topic])
         logger.info(
             "Consumer started on topic '%s', window=%ds, overlap=%ds",
-            self.topic, 
-            self.window_seconds, 
-            self.buffer.overlap_seconds
+            self.topic,
+            self.window_seconds,
+            self.buffer.overlap_seconds,
         )
 
         last_window_flush = time.time()

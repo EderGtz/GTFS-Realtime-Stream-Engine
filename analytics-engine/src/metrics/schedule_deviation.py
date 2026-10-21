@@ -75,7 +75,9 @@ class DeviationResult:
     scheduled_at: pd.Timestamp
     actual_at: pd.Timestamp
     deviation_seconds: float
-    location: dict | None = None  # GeoJSON Point {"type": "Point", "coordinates": [lon, lat]} for 2dsphere indexing
+    location: dict | None = (
+        None  # GeoJSON Point {"type": "Point", "coordinates": [lon, lat]} for 2dsphere indexing
+    )
     route_id: str | None = None
     route_long_name: str | None = None
 
@@ -85,6 +87,7 @@ def parse_gtfs_time_offset(time_str: str) -> timedelta:
     h, m, s = (int(part) for part in time_str.split(":"))
     return timedelta(hours=h, minutes=m, seconds=s)
 
+
 def gtfs_time_to_seconds(time_str: str) -> int:
     """Parse a GTFS HH:MM:SS string (hours may exceed 24) into integer seconds-of-day.
 
@@ -93,6 +96,7 @@ def gtfs_time_to_seconds(time_str: str) -> int:
     """
     h, m, s = (int(part) for part in time_str.split(":"))
     return h * 3600 + m * 60 + s
+
 
 def resolve_scheduled_datetime(
     actual_eastern: pd.Timestamp, scheduled_seconds: int

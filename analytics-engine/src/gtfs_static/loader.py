@@ -32,12 +32,7 @@ import pandas as pd
 from metrics.schedule_deviation import ScheduledStopTime, gtfs_time_to_seconds
 from utils.logger import get_logger
 
-_REQUIRED_FILES = (
-    "stops.txt", 
-    "trips.txt", 
-    "stop_times.txt", 
-    "routes.txt"
-    )
+_REQUIRED_FILES = ("stops.txt", "trips.txt", "stop_times.txt", "routes.txt")
 _OPTIONAL_VERSION_FILE = "feed_info.txt"
 
 # analytics-engine/src/gtfs_static/loader.py. parents[2] == analytics-engine/
@@ -56,6 +51,7 @@ _REQUIRED_COLUMNS = {
 }
 
 logger = get_logger(__name__)
+
 
 @dataclass(frozen=True)
 class StopInfo:
@@ -93,8 +89,8 @@ class GtfsStaticData:
 
     def load(self) -> None:
         """
-        Read all three required files fresh and rebuild every lookup. 
-        
+        Read all three required files fresh and rebuild every lookup.
+
         Raises:
             FileNotFoundError: If a required GTFS file is missing.
             ValueError: If a required file is missing one or more required columns.
@@ -103,15 +99,15 @@ class GtfsStaticData:
         self._validate_files_exist()
 
         trips_df = pd.read_csv(
-            self.gtfs_dir / "trips.txt", 
+            self.gtfs_dir / "trips.txt",
             dtype={"trip_id": str, "route_id": str, "trip_short_name": str},
         )
         stop_times_df = pd.read_csv(
-            self.gtfs_dir / "stop_times.txt", 
+            self.gtfs_dir / "stop_times.txt",
             dtype={"trip_id": str, "stop_id": str, "stop_headsign": str},
         )
         stops_df = pd.read_csv(
-            self.gtfs_dir / "stops.txt", 
+            self.gtfs_dir / "stops.txt",
             dtype={"stop_id": str},
         )
         routes_df = pd.read_csv(
@@ -131,7 +127,9 @@ class GtfsStaticData:
             active_service_ids = self._build_active_service_ids()
             if active_service_ids is not None:
                 original_trips = len(trips_df)
-                trips_df = trips_df[trips_df["service_id"].isin(active_service_ids)].copy()
+                trips_df = trips_df[
+                    trips_df["service_id"].isin(active_service_ids)
+                ].copy()
                 filtered_trip_ids = set(trips_df["trip_id"].astype(str))
                 original_st = len(stop_times_df)
                 stop_times_df = stop_times_df[
@@ -140,8 +138,10 @@ class GtfsStaticData:
                 logger.info(
                     "Service-day filter: %d -> %d trips, %d -> %d stop_times "
                     "(%d active service_ids)",
-                    original_trips, len(trips_df),
-                    original_st, len(stop_times_df),
+                    original_trips,
+                    len(trips_df),
+                    original_st,
+                    len(stop_times_df),
                     len(active_service_ids),
                 )
 
@@ -183,11 +183,11 @@ class GtfsStaticData:
                 self.load()
                 return True
             except (
-                FileNotFoundError, 
-                ValueError, 
-                pd.errors.EmptyDataError, 
-                pd.errors.ParserError
-                ):
+                FileNotFoundError,
+                ValueError,
+                pd.errors.EmptyDataError,
+                pd.errors.ParserError,
+            ):
                 # The exception is not raised here. The system continues to use
                 # the old, valid snapshot (self.direction_lookup, etc.)
                 return False
@@ -224,13 +224,17 @@ class GtfsStaticData:
             try:
                 cal = pd.read_csv(
                     calendar_path,
-                    dtype={
-                        "service_id": str, 
-                        "start_date": str, 
-                        "end_date": str
-                    },
+                    dtype={"service_id": str, "start_date": str, "end_date": str},
                 )
-                day_cols = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+                day_cols = [
+                    "monday",
+                    "tuesday",
+                    "wednesday",
+                    "thursday",
+                    "friday",
+                    "saturday",
+                    "sunday",
+                ]
                 for row in cal.itertuples():
                     start = str(row.start_date)
                     end = str(row.end_date)
@@ -249,10 +253,7 @@ class GtfsStaticData:
             try:
                 cal_dates = pd.read_csv(
                     calendar_dates_path,
-                    dtype={
-                        "service_id": str, 
-                        "date": str
-                    },
+                    dtype={"service_id": str, "date": str},
                 )
                 target_strs = {d.strftime("%Y%m%d") for d in target_dates}
                 for row in cal_dates.itertuples():
@@ -271,14 +272,13 @@ class GtfsStaticData:
 
     def _validate_files_exist(self) -> None:
         missing = [
-            filename 
-           for filename in _REQUIRED_FILES 
-           if not (self.gtfs_dir / filename).exists()
+            filename
+            for filename in _REQUIRED_FILES
+            if not (self.gtfs_dir / filename).exists()
         ]
         if missing:
             raise FileNotFoundError(
-                f"Missing required GTFS-static file(s) in "
-                f"{self.gtfs_dir}: {missing}"
+                f"Missing required GTFS-static file(s) in {self.gtfs_dir}: {missing}"
             )
 
     def _validate_columns(self, filename: str, df: pd.DataFrame) -> None:
@@ -287,13 +287,12 @@ class GtfsStaticData:
 
         if missing:
             raise ValueError(
-                f"Missing required column(s) in {filename}: "
-                f"{sorted(missing)}"
+                f"Missing required column(s) in {filename}: {sorted(missing)}"
             )
 
     @staticmethod
     def _build_direction_lookup(trips_df: pd.DataFrame) -> dict[str, int]:
-        
+
         valid = trips_df.dropna(subset=["trip_id", "direction_id"])
         lookup: dict[str, int] = {}
 
@@ -303,8 +302,7 @@ class GtfsStaticData:
 
             if row.direction_id not in (0, 1):
                 raise ValueError(
-                    f"Invalid direction_id for trip {row.trip_id}: "
-                    f"{row.direction_id}"
+                    f"Invalid direction_id for trip {row.trip_id}: {row.direction_id}"
                 )
             lookup[trip_id] = direction_id
 
@@ -324,8 +322,7 @@ class GtfsStaticData:
 
             if stop_sequence < 0:
                 raise ValueError(
-                    f"Invalid stop_sequence for trip {trip_id}: "
-                    f"{stop_sequence}"
+                    f"Invalid stop_sequence for trip {trip_id}: {stop_sequence}"
                 )
 
             key = (trip_id, stop_sequence)
@@ -342,9 +339,7 @@ class GtfsStaticData:
                 else None
             )
             stop_id = (
-                str(row.stop_id)
-                if has_stop_id and pd.notna(row.stop_id)
-                else None
+                str(row.stop_id) if has_stop_id and pd.notna(row.stop_id) else None
             )
 
             lookup[key] = ScheduledStopTime(
@@ -368,19 +363,13 @@ class GtfsStaticData:
             stop_id = str(row.stop_id)
 
             stop_name = (
-                str(row.stop_name)
-                if has_name and pd.notna(row.stop_name)
-                else None
+                str(row.stop_name) if has_name and pd.notna(row.stop_name) else None
             )
             stop_lat = (
-                float(row.stop_lat)
-                if has_lat and pd.notna(row.stop_lat)
-                else None
+                float(row.stop_lat) if has_lat and pd.notna(row.stop_lat) else None
             )
             stop_lon = (
-                float(row.stop_lon)
-                if has_lon and pd.notna(row.stop_lon)
-                else None
+                float(row.stop_lon) if has_lon and pd.notna(row.stop_lon) else None
             )
 
             lookup[stop_id] = StopInfo(
@@ -425,7 +414,11 @@ class GtfsStaticData:
             except (pd.errors.EmptyDataError, pd.errors.ParserError):
                 feed_info = None
 
-            if feed_info is not None and "feed_version" in feed_info.columns and len(feed_info) > 0:
+            if (
+                feed_info is not None
+                and "feed_version" in feed_info.columns
+                and len(feed_info) > 0
+            ):
                 version = feed_info["feed_version"].iloc[0]
 
                 if pd.notna(version):
@@ -443,9 +436,7 @@ class GtfsStaticData:
 
         for filename in _REQUIRED_FILES:
             stat = (self.gtfs_dir / filename).stat()
-            parts.append(
-                f"{filename}:{stat.st_size}:{int(stat.st_mtime)}"
-            )
+            parts.append(f"{filename}:{stat.st_size}:{int(stat.st_mtime)}")
 
         fingerprint = "|".join(parts)
 

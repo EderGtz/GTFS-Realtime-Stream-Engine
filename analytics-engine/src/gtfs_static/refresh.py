@@ -50,7 +50,9 @@ def download_and_extract_gtfs(
             logger.info("GTFS static data is up to date (ETag match).")
             return False
 
-        logger.info("New GTFS static data available (ETag: %s). Downloading...", remote_etag)
+        logger.info(
+            "New GTFS static data available (ETag: %s). Downloading...", remote_etag
+        )
 
         zip_path = target_path / "MBTA_GTFS.zip"
         with requests.get(MBTA_GTFS_URL, stream=True, timeout=60) as r:
