@@ -115,6 +115,12 @@ services:
     environment:
       <<: *common-env
       API_PORT: "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       mongodb:
         condition: service_healthy
@@ -133,6 +139,12 @@ services:
       KAFKA_BROKERS: kafka:29092
       KAFKA_TOPIC: raw.vehicle-positions
       KAFKA_GROUP_ID: analytics-engine
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/analytics-heartbeat -mmin -3 | grep -q ."]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 240s
     depends_on:
       kafka:
         condition: service_healthy
@@ -153,6 +165,12 @@ services:
       KAFKA_TOPIC: raw.vehicle-positions
       KAFKA_GROUP_ID: archive-group
       ARCHIVE_DIR: /data/archive
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/archive-heartbeat -mmin -3 | grep -q ."]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     volumes:
       # Bind mount so archives are greppable from the
       # host and survive `docker compose down -v`
