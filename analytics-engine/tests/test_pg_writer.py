@@ -264,6 +264,40 @@ class TestPgWriter:
         mock_conn.rollback.assert_called_once()
 
     @patch("db.pg_writer.execute_values")
+    def test_upsert_failure_with_dead_connection_does_not_raise(self, mock_ev):
+        import psycopg2
+
+        mock_ev.side_effect = psycopg2.OperationalError("server closed the connection")
+        writer, mock_conn = _make_writer()
+        mock_conn.rollback.side_effect = psycopg2.InterfaceError(
+            "connection already closed"
+        )
+        stats = [
+            HourlyStats(
+                route_id="28",
+                hour=_utc(2026, 10, 5, 10),
+                avg_deviation=100.0,
+                p95_deviation=200.0,
+                vehicle_count=5,
+                on_time_pct=80.0,
+                bunching_events=1,
+            )
+        ]
+        assert writer.upsert_hourly_stats(stats) == 0
+
+    @patch("db.pg_writer.connect_pg_with_retry")
+    def test_reconnect_replaces_dead_connection(self, mock_connect):
+        writer, old_conn = _make_writer()
+        new_conn = MagicMock()
+        mock_connect.return_value = new_conn
+
+        writer.reconnect()
+
+        old_conn.close.assert_called_once()
+        assert writer._conn is new_conn
+        mock_connect.assert_called_once_with("postgresql://fake", attempts=1)
+
+    @patch("db.pg_writer.execute_values")
     def test_close_closes_connection(self, _mock_ev):
         writer, mock_conn = _make_writer()
         writer.close()

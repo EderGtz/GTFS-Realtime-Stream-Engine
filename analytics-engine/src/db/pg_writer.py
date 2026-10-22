@@ -260,8 +260,31 @@ class PgWriter:
             return len(rows)
         except psycopg2.Error:
             logger.exception("Failed to upsert %d hourly stat(s).", len(rows))
-            self._conn.rollback()
+            try:
+                self._conn.rollback()
+            except psycopg2.Error:
+                # A failed rollback usually means the connection itself died
+                # (e.g. Postgres restarted). reconnect() rebuilds it.
+                logger.warning(
+                    "Rollback failed; PostgreSQL connection is likely dead.",
+                    exc_info=True,
+                )
             return 0
+
+    def reconnect(self) -> None:
+        """Replace a dead connection after a PostgreSQL restart.
+
+        Uses a single connection attempt (not connect_pg_with_retry's default
+        five): the caller retries on a timer, so blocking the consumer for
+        multiple backoff sleeps here would only delay the next attempt.
+        """
+        try:
+            self._conn.close()
+        except Exception:
+            logger.warning("Error closing old PostgreSQL connection.", exc_info=True)
+        self._conn = connect_pg_with_retry(self._dsn, attempts=1)
+        self._ensure_table()
+        logger.info("Reconnected to PostgreSQL.")
 
     def close(self) -> None:
         """Close the PostgreSQL connection. Called on shutdown."""
