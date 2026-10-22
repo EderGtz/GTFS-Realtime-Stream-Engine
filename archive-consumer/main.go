@@ -89,6 +89,7 @@ func main() {
 	defer stop()
 
 	counter := &countingWriter{inner: writer}
+	touchHeartbeat()
 	go logStats(ctx, counter)
 
 	if err := Run(ctx, reader, counter, batchSize, batchWait); err != nil {
@@ -98,7 +99,8 @@ func main() {
 	slog.Info("shutdown complete")
 }
 
-// logStats logs cumulative archive counts once a minute until ctx ends.
+// logStats logs cumulative archive counts once a minute until ctx ends, and
+// refreshes the liveness heartbeat file the compose healthcheck watches.
 func logStats(ctx context.Context, c *countingWriter) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
@@ -107,7 +109,14 @@ func logStats(ctx context.Context, c *countingWriter) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			touchHeartbeat()
 			slog.Info("archive stats", "lines", c.lines.Load(), "bytes", c.bytes.Load())
 		}
 	}
+}
+
+// touchHeartbeat marks the process alive for the compose healthcheck
+// (liveness only — a quiet topic must not look unhealthy).
+func touchHeartbeat() {
+	_ = os.WriteFile("/tmp/archive-heartbeat", []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
 }
