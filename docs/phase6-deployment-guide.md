@@ -305,6 +305,18 @@ Without this, browsers would silently upgrade script requests to
 HTTPS, causing the map to fail to load (blank page, no errors in
 console).
 
+### Transport security (deliberate tradeoff)
+
+The stack runs plain HTTP on a public IP by decision, not oversight:
+
+- The exposed surface is read-only public transit data — there are no
+  accounts, no write endpoints, and nothing secret in the responses.
+- Rate limiting, CORS and helmet headers are in place.
+
+Real TLS needs a domain pointed at the box plus a terminating reverse
+proxy in front of port 3000. Until a domain exists, HTTP-only is the
+accepted posture (also listed in README "Known Limitations").
+
 ---
 
 ## 10. Known Issues Encountered
