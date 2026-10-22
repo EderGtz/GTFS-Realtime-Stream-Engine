@@ -169,12 +169,15 @@ html += '</div>';
         html += '<div class="history-content" style="display:none"></div>';
         html += '<div class="history-help" style="display:none;padding:8px 0;font-size:12px;line-height:1.5;color:#555;border-top:1px solid #eee;margin-top:8px">';
         html += '<div style="margin-bottom:4px"><strong>What this chart shows:</strong></div>';
-        html += '<div style="margin-bottom:3px">Each point is one hour of data, aggregated by the analytics engine as it processes live pings.</div>';
+        html += '<div style="margin-bottom:3px">Data is aggregated hourly by the analytics engine as it processes live pings. On 3/7/14-day ranges the hours are grouped into midnight-aligned buckets (3h/6h/12h) so the chart stays readable.</div>';
+        html += '<div style="margin-bottom:3px"><span style="color:#888">Blue line</span> &mdash; on-time % per hour (1d) or the vehicle-weighted average per bucket (busy hours count more than quiet ones)</div>';
+        html += '<div style="margin-bottom:3px"><span style="color:#888">Shaded band</span> &mdash; the range from the worst to the best hour in each bucket, so individual bad hours stay visible</div>';
         html += '<div style="margin-bottom:3px"><span style="color:#888">On-time %</span> &mdash; share of vehicle arrivals within &plusmn;3 minutes of schedule (APTA standard)</div>';
         html += '<div style="margin-bottom:3px"><span style="color:#888">Avg deviation</span> &mdash; average minutes off schedule across all vehicles that hour</div>';
-        html += '<div style="margin-bottom:3px"><span style="color:#888">P95 deviation</span> &mdash; 95% of vehicles were this late or less</div>';
+        html += '<div style="margin-bottom:3px"><span style="color:#888">P95 deviation</span> &mdash; 95% of vehicles were this late or less (bucket view shows the worst hour)</div>';
         html += '<div style="margin-bottom:3px"><span style="color:#888">Bunching events</span> &mdash; pairs of buses detected running too close together</div>';
-        html += '<div>Hover over the chart to see all metrics for a specific hour.</div>';
+        html += '<div style="margin-bottom:3px">Hours with no service (typically overnight) show as gaps, not 0%.</div>';
+        html += '<div>Hover over the chart to see all metrics for a specific hour or bucket.</div>';
         html += '</div>';
         html += '</div>';
 
@@ -239,34 +242,43 @@ html += '</div>';
 
         var points = data.data_points;
 
-        // Summary stats
+        // Summary stats. No-service hours (vehicle_count = 0, stored as
+        // on_time_pct = 0) are skipped — the same false-zero problem the
+        // chart's gap handling fixes; otherwise "Avg on-time" would read
+        // lower than every point actually drawn. FUTURE FIX: make these
+        // vehicle-weighted too, like the bucketed chart line.
         var sumOnTime = 0, sumAvgDev = 0, sumVehicles = 0, sumBunching = 0;
         var worstOnTime = 101, worstHour = '';
+        var servedHours = 0;
         for (var i = 0; i < points.length; i++) {
             var p = points[i];
-            sumOnTime += p.on_time_pct;
-            sumAvgDev += p.avg_deviation;
             sumVehicles += p.vehicle_count;
             sumBunching += p.bunching_events;
+            if (p.vehicle_count === 0) continue;
+            servedHours += 1;
+            sumOnTime += p.on_time_pct;
+            sumAvgDev += p.avg_deviation;
             if (p.on_time_pct < worstOnTime) {
                 worstOnTime = p.on_time_pct;
                 worstHour = p.hour;
             }
         }
         var n = points.length;
-        var avgOnTime = (sumOnTime / n).toFixed(1);
-        var avgDev = Math.round(sumAvgDev / n);
+        var hasService = servedHours > 0;
+        var avgOnTime = hasService ? (sumOnTime / servedHours).toFixed(1) : null;
+        var avgDev = hasService ? Math.round(sumAvgDev / servedHours) : 0;
 
         var html = '';
         html += '<div class="history-chart-wrap"><canvas id="history-chart"></canvas></div>';
 
         html += '<div class="history-summary">';
         html += '<span class="label">Avg on-time</span><span class="value" style="color:' +
-            pctColor(parseFloat(avgOnTime)) + '">' + avgOnTime + '%</span>';
+            (hasService ? pctColor(parseFloat(avgOnTime)) : '#888') + '">' +
+            (hasService ? avgOnTime + '%' : '\u2014') + '</span>';
         html += '<span class="label">Avg deviation</span><span class="value">' +
-            formatSeconds(avgDev) + '</span>';
+            (hasService ? formatSeconds(avgDev) : '\u2014') + '</span>';
         html += '<span class="label">Worst hour</span><span class="value">' +
-            worstOnTime.toFixed(0) + '%</span>';
+            (hasService ? worstOnTime.toFixed(0) + '%' : '\u2014') + '</span>';
         html += '<span class="label">Total vehicles</span><span class="value">' +
             sumVehicles.toLocaleString() + '</span>';
         html += '<span class="label">Bunching events</span><span class="value">' +
@@ -286,9 +298,9 @@ html += '</div>';
 
         content.innerHTML = html;
 
-        // Draw the chart via history-chart.js
+        // Draw the chart via history-chart.js (days drives the bucket size)
         if (window.drawChart) {
-            window.drawChart('history-chart', points);
+            window.drawChart('history-chart', points, historyDays);
         }
     }
 
