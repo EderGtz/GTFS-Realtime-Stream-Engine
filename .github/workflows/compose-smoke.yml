@@ -26,8 +26,13 @@ jobs:
     - name: Validate Docker Compose
       run: docker compose config -q
 
-    - name: Prepare data/archive permissions
-      run: mkdir -p data/archive && sudo chown 10001:10001 data/archive
+    - name: Prepare a clean data/archive
+      run: |
+        # Start clean so a stale smoke-1 from an earlier run cannot make the
+        # pipeline check pass without a working Kafka round-trip.
+        sudo rm -rf data/archive
+        mkdir -p data/archive
+        sudo chown 10001:10001 data/archive
 
     - name: Build all service images
       run: docker compose build
@@ -56,15 +61,26 @@ jobs:
     - name: Pipeline smoke (publish -> archive)
       run: |
         MSG='{"agency_id":"smoke","vehicle_id":"smoke-1","trip_id":null,"route_id":null,"direction_id":null,"location":{"type":"Point","coordinates":[0,0]},"timestamp":"2026-01-01T00:00:00.000Z","bearing":null,"speed":null,"current_stop_sequence":null,"stop_id":null,"current_status":null,"ingested_at":"2026-01-01T00:00:00.000Z"}'
-        echo "$MSG" | docker exec -i gtfs_kafka /opt/kafka/bin/kafka-console-producer.sh \
-          --bootstrap-server localhost:9092 --topic raw.vehicle-positions
-        for i in $(seq 1 60); do
-          if grep -rq "smoke-1" data/archive/ 2>/dev/null; then
-            echo "message archived verbatim"; exit 0
-          fi
-          sleep 2
+        # The archive group is brand new in this job and starts at
+        # auto.offset.reset=latest. A message published while the group is
+        # still joining can therefore be skipped. Publish again on each
+        # attempt so at least one message lands after the group is ready.
+        for attempt in $(seq 1 10); do
+          echo "publish attempt $attempt"
+          echo "$MSG" | docker exec -i gtfs_kafka /opt/kafka/bin/kafka-console-producer.sh \
+            --bootstrap-server localhost:9092 --topic raw.vehicle-positions
+          for i in $(seq 1 10); do
+            if grep -rq "smoke-1" data/archive/ 2>/dev/null; then
+              echo "message archived verbatim"; exit 0
+            fi
+            sleep 1
+          done
         done
-        echo "message never reached the archive"; docker compose logs archive; exit 1
+        echo "message never reached the archive"
+        echo "host archive files:"; find data/archive -type f 2>/dev/null | head -20 || true
+        echo "container archive files:"; docker compose exec -T archive find /data/archive -type f | head -20 || true
+        docker compose logs archive
+        exit 1
 
     - name: Tear down
       if: always()
