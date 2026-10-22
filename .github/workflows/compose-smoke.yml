@@ -1,0 +1,71 @@
+name: "CI: Compose Smoke"
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  smoke:
+    name: Full-stack build, boot & health
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      KAFKA_BROKER: kafka:29092
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DATABASE: gtfs_realtime
+      POSTGRES_USER: gtfs
+      POSTGRES_PASSWORD: gtfs
+      POSTGRES_DB: gtfs_realtime
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Validate Docker Compose
+      run: docker compose config -q
+
+    - name: Prepare data/archive permissions
+      run: mkdir -p data/archive && sudo chown 10001:10001 data/archive
+
+    - name: Build all service images
+      run: docker compose build
+
+    - name: Boot the full stack
+      run: docker compose up -d
+
+    - name: API health
+      run: |
+        for i in $(seq 1 60); do
+          if curl -fsS http://localhost:3000/health | grep -q '"status":"ok"'; then
+            echo "API healthy"; exit 0
+          fi
+          sleep 2
+        done
+        echo "API never became healthy"; docker compose logs api; exit 1
+
+    - name: Live status endpoint responds
+      run: curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:3000/v1/status/live | grep -q 200
+
+    - name: Archive consumer started
+      run: |
+        docker logs gtfs_archive 2>&1 | grep -q "starting archive-consumer" \
+          || { echo "archive did not start"; docker compose logs archive; exit 1; }
+
+    - name: Pipeline smoke (publish -> archive)
+      run: |
+        MSG='{"agency_id":"smoke","vehicle_id":"smoke-1","trip_id":null,"route_id":null,"direction_id":null,"location":{"type":"Point","coordinates":[0,0]},"timestamp":"2026-01-01T00:00:00.000Z","bearing":null,"speed":null,"current_stop_sequence":null,"stop_id":null,"current_status":null,"ingested_at":"2026-01-01T00:00:00.000Z"}'
+        echo "$MSG" | docker exec -i gtfs_kafka /opt/kafka/bin/kafka-console-producer.sh \
+          --bootstrap-server localhost:9092 --topic raw.vehicle-positions
+        for i in $(seq 1 60); do
+          if grep -rq "smoke-1" data/archive/ 2>/dev/null; then
+            echo "message archived verbatim"; exit 0
+          fi
+          sleep 2
+        done
+        echo "message never reached the archive"; docker compose logs archive; exit 1
+
+    - name: Tear down
+      if: always()
+      run: docker compose down -v

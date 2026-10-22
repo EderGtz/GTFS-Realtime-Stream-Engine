@@ -30,7 +30,10 @@ jobs:
       run: uv sync
 
     - name: Run Linter (Ruff)
-      run: uv run ruff check src/
+      run: uv run ruff check src/ tests/
+
+    - name: Check Formatting (Ruff)
+      run: uv run ruff format --check src/ tests/
 
     - name: Run Unit Tests (Pytest)
       run: uv run pytest
