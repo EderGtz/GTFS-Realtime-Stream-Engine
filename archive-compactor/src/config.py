@@ -1,7 +1,7 @@
 """
-One immutable snapshot of the process environment, read once at startup. 
-Unlike other modules of the repo,  there are no mandatory, secret-bearing 
-variables in this one: this compactor only touches local files, so every 
+One immutable snapshot of the process environment, read once at startup.
+Unlike other modules of the repo,  there are no mandatory, secret-bearing
+variables in this one: this compactor only touches local files, so every
 knob has a sane default and a missing variable is recoverable rather than fatal.
 """
 
@@ -36,7 +36,7 @@ class AppConfig:
     archive_dir: Path
 
     # Minimum hours a day dir must be older than (measured from its 00:00 UTC)
-    # before it is eligible to compact. main.py will pass this config value 
+    # before it is eligible to compact. main.py will pass this config value
     # in once it wires config -> eligibility.
     compact_min_age_hours: int
 

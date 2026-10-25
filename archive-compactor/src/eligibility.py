@@ -1,7 +1,7 @@
 """Day-eligibility rules for the archive compactor.
 
-Given the on-disk archive tree and the current time, decide which ``YYYY-MM-DD`` 
-days are safe to fold into Parquet. No file writes, no clock access (time is 
+Given the on-disk archive tree and the current time, decide which ``YYYY-MM-DD``
+days are safe to fold into Parquet. No file writes, no clock access (time is
 passed in), no environment and no database reads.
 
 A day directory is eligible when all these three gates pass:
@@ -30,7 +30,7 @@ MIN_AGE = timedelta(hours=48)
 
 # The Parquet output lives inside the archive root under these names, one
 # subdir per compacted day. The Hive-style `date=YYYY-MM-DD` prefix lets
-# any data wrangling and analysis tool like DuckDB/pandas/Polars push 
+# any data wrangling and analysis tool like DuckDB/pandas/Polars push
 # the date predicate down to a directory listing.
 PARQUET_DIR_NAME = "parquet"
 PARQUET_DIR_PREFIX = "date="
@@ -51,7 +51,7 @@ def eligible_days(root: Path, now: datetime) -> list[str]:
 
     ``now`` is the current moment; it may be any timezone-aware datetime, and a
     naive datetime is treated as UTC. A missing or empty ``root`` returns ``[]``
-    so the compactor's daily tick is a harmless no-op on a fresh install (nothing 
+    so the compactor's daily tick is a harmless no-op on a fresh install (nothing
     to compact yet).
 
     The three gates are decomposed into the private helpers below so each is
