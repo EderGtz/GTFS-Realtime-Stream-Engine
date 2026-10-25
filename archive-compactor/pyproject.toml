@@ -6,7 +6,12 @@ authors = [
     { name = "Eder Gutierrez", email = "gutierrezeder64@gmail.com" }
 ]
 requires-python = ">=3.12"
+# duckdb is the compaction engine (read raw lines, derive
+# promoted columns, COPY ... TO PARQUET); pyarrow is the canonical in-process
+# Parquet reader used for row-count verification and inspection.
 dependencies = [
+    "duckdb>=1.5.5",
+    "pyarrow>=25.0.1",
     "python-dotenv>=1.0.0",
 ]
 
@@ -14,6 +19,9 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.9.0",
+    # pandas/numpy are test-and-inspection only
+    "pandas>=3.0.5",
+    "numpy>=2.5.2",
 ]
 
 [build-system]
