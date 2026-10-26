@@ -1,26 +1,51 @@
 /**
- * Route Performance Search
- * Follows the same plain-JS pattern as info-toggle.js.
+ * route performance search panel.
+ *
+ * WHAT THIS FILE OWNS:
+ *   - panel open/close, outside-click + Escape handling
+ *   - route lookup (GET /v1/routes/:id/performance) and the result card
+ *   - the "show only this route on map" filter buttons
+ *   - the collapsible N-day history section (chart + summary + day picker)
  */
 
-(function () {
-    'use strict';
+import type { RouteHistoryResponse, RoutePerformanceResponse } from '../../src/api/types.js';
+import { ApiError, fetchRouteHistory, fetchRoutePerformance } from '../lib/api.js';
+import { escapeHtml, formatSeconds, pctColor } from '../lib/format.js';
+import { mustGetElement } from '../lib/dom.js';
+import { drawChart } from '../charts/history-chart.js';
+import { clearRouteFilter, filterByRoute, getActiveRouteFilter } from '../map-logic.js';
 
-    var btn      = document.getElementById('route-search-btn');
-    var panel    = document.getElementById('route-search-panel');
-    var input    = document.getElementById('route-search-input');
-    var closeBtn = document.getElementById('route-search-close');
-    var results  = document.getElementById('route-search-results');
-    var help     = document.getElementById('route-search-help');
+/** Route IDs the search accepts. */
+const VALID_ROUTE = /^[A-Za-z0-9-]+$/;
 
-    var API_BASE = '/v1/routes/';
-    var API_SUFFIX = '/performance';
+/** Selectable history ranges in days (90 is the API max). */
+const DAY_OPTIONS = [1, 3, 7, 14];
 
-    var VALID_ROUTE = /^[A-Za-z0-9-]+$/;
+/**
+ * Wire up the search panel. Call once at startup (from the map entry
+ * module). All elements are static markup in map.html.
+ */
+export function initRouteSearch(): void {
+    const btn      = mustGetElement<HTMLButtonElement>('route-search-btn');
+    const panel    = mustGetElement<HTMLElement>('route-search-panel');
+    const input    = mustGetElement<HTMLInputElement>('route-search-input');
+    const closeBtn = mustGetElement<HTMLButtonElement>('route-search-close');
+    const results  = mustGetElement<HTMLElement>('route-search-results');
+    const help     = mustGetElement<HTMLElement>('route-search-help');
+
+    // --- Panel state -----------------------------------------------------
+
+    /** Last successful /performance payload; re-rendered when the filter
+     *  buttons change the map so the button state stays in sync. */
+    let lastSearchedData: RoutePerformanceResponse | null = null;
+    /** Selected history range (days). */
+    let historyDays = 7;
+    /** Whether the history section is expanded. */
+    let historyOpen = false;
 
     // --- Open / Close ---------------------------------------------------
 
-    function openPanel() {
+    function openPanel(): void {
         btn.style.display = 'none';
         panel.classList.add('open');
         input.value = '';
@@ -31,7 +56,7 @@
         setTimeout(function () { input.focus(); }, 50);
     }
 
-    function closePanel() {
+    function closePanel(): void {
         panel.classList.remove('open');
         btn.style.display = 'flex';
         btn.classList.remove('active');
@@ -55,47 +80,39 @@
     // Close when clicking outside the panel and button
     document.addEventListener('click', function (e) {
         if (!panel.classList.contains('open')) return;
-        if (panel.contains(e.target) || btn.contains(e.target)) return;
+        const target = e.target as Node | null;
+        if (target && (panel.contains(target) || btn.contains(target))) return;
         closePanel();
     });
 
-    // --- Help toggle (the small ? inside the panel) ---------------------
+    // --- Help toggle (the small ? inside the panel) -----------------------
 
-    function toggleHelp() {
+    function toggleHelp(): void {
         help.style.display = help.style.display === 'none' ? 'block' : 'none';
     }
 
     // Use event delegation so the ? works even after renderResults rewrites innerHTML
     results.addEventListener('click', function (e) {
-        if (e.target && e.target.classList.contains('perf-help-btn')) {
+        const el = e.target instanceof HTMLElement ? e.target : null;
+        if (el && el.classList.contains('perf-help-btn')) {
             toggleHelp();
         }
     });
 
-    // --- Search ---------------------------------------------------------
+    // --- Search -----------------------------------------------------------
 
-    function formatSeconds(s) {
-        if (s === 0) return '0s';
-        var abs = Math.abs(s);
-        if (abs < 60) return Math.round(abs) + 's';
-        var min = Math.floor(abs / 60);
-        var sec = Math.round(abs % 60);
-        return sec > 0 ? min + 'm ' + sec + 's' : min + 'm';
+    /** One table row of the result card. `value` may contain HTML (colors). */
+    function row(label: string, value: string | number): string {
+        return '<span class="label">' + escapeHtml(label) + '</span>' +
+               '<span class="value">' + value + '</span>';
     }
 
-    function pctColor(pct) {
-        if (pct >= 80) return '#27ae60';
-        if (pct >= 50) return '#e67e22';
-        return '#e74c3c';
-    }
+    function renderResults(data: RoutePerformanceResponse): void {
+        const d = data.deviation;
+        const b = data.bunching;
+        const name = data.route_long_name || data.route_id;
 
-    function renderResults(data) {
-        var d = data.deviation;
-        var b = data.bunching;
-        var name = data.route_long_name || data.route_id;
-
-        var html = '<div class="route-perf-title">' + escapeHtml(name) 
-        var html = '<div class="route-perf-title">' + escapeHtml(name);
+        let html = '<div class="route-perf-title">' + escapeHtml(name);
 
         if (d.count !== 0 || b.active_events !== 0) {
             html += ' <button class="perf-help-btn" title="What do these numbers mean?" ' +
@@ -103,7 +120,7 @@
                     'color:#000;vertical-align:middle;padding: -5 0 0 15px">?</button>';
         }
 
-html += '</div>';
+        html += '</div>';
 
         // Deviation section
         html += '<div class="route-perf-section">';
@@ -143,7 +160,7 @@ html += '</div>';
                 'Live 3-minute window &middot; ' + data.period + '</div>';
 
         // Show on map button
-        var isActive = window.getActiveRouteFilter && window.getActiveRouteFilter() === data.route_id;
+        const isActive = getActiveRouteFilter() === data.route_id;
         html += '<div style="margin-top:10px">';
         if (isActive) {
             html += '<button class="route-filter-btn" data-action="clear" ' +
@@ -185,53 +202,65 @@ html += '</div>';
         results.classList.add('open');
     }
 
-    function row(label, value) {
-        return '<span class="label">' + escapeHtml(label) + '</span>' +
-               '<span class="value">' + value + '</span>';
-    }
-
-    function escapeHtml(str) {
-        var div = document.createElement('div');
-        div.appendChild(document.createTextNode(str));
-        return div.innerHTML;
-    }
-
-    function showError(msg) {
+    function showError(msg: string): void {
         results.innerHTML = '<div id="route-search-error">' + escapeHtml(msg) + '</div>';
         results.classList.add('open');
     }
 
-    var lastSearchedData = null;
+    function showLoading(): void {
+        results.innerHTML = '<div style="color:#888">Searching\u2026</div>';
+        results.classList.add('open');
+    }
 
-    // --- Route history state ----------------------------------------------
-    var historyDays = 7;
-    var historyOpen = false;
+    async function search(query: string): Promise<void> {
+        const routeId = query.trim();
+        if (!routeId) return;
 
-    // --- Route history: fetch + render --------------------------------------
+        if (!VALID_ROUTE.test(routeId)) {
+            showError('Invalid route format. Use only letters, numbers, and hyphens.');
+            return;
+        }
 
-    function fetchHistory(routeId, days) {
+        showLoading();
+
+        try {
+            const data = await fetchRoutePerformance(routeId);
+            lastSearchedData = data;
+            renderResults(data);
+        } catch (err) {
+            if (err instanceof ApiError) {
+                if (err.status === 400) {
+                    showError('Invalid route ID.');
+                } else {
+                    showError('Server error (HTTP ' + err.status + ')');
+                }
+                return;
+            }
+            showError('Could not reach the server. Is the API running?');
+        }
+    }
+
+    // --- Route history: fetch + render ------------------------------------
+
+    function fetchHistory(routeId: string, days: number): void {
         historyDays = days;
-        var content = results.querySelector('.history-content');
+        const content = results.querySelector<HTMLElement>('.history-content');
         if (!content) return;
 
         content.innerHTML = '<div class="history-empty">Loading history\u2026</div>';
 
-        fetch('/v1/routes/' + encodeURIComponent(routeId) + '/history?days=' + days)
-            .then(function (resp) {
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                return resp.json();
-            })
+        fetchRouteHistory(routeId, days)
             .then(function (data) {
                 renderHistory(data);
             })
-            .catch(function (err) {
+            .catch(function (err: unknown) {
                 content.innerHTML = '<div class="history-empty">Could not load history (' +
-                    escapeHtml(err.message) + ')</div>';
+                    escapeHtml(err instanceof Error ? err.message : String(err)) + ')</div>';
             });
     }
 
-    function renderHistory(data) {
-        var content = results.querySelector('.history-content');
+    function renderHistory(data: RouteHistoryResponse): void {
+        const content = results.querySelector<HTMLElement>('.history-content');
         if (!content) return;
 
         if (!data.data_points || data.data_points.length === 0) {
@@ -240,18 +269,16 @@ html += '</div>';
             return;
         }
 
-        var points = data.data_points;
+        const points = data.data_points;
 
         // Summary stats. No-service hours (vehicle_count = 0, stored as
-        // on_time_pct = 0) are skipped — the same false-zero problem the
-        // chart's gap handling fixes; otherwise "Avg on-time" would read
+        // on_time_pct = 0) are skipped; otherwise "Avg on-time" would read
         // lower than every point actually drawn. FUTURE FIX: make these
         // vehicle-weighted too, like the bucketed chart line.
-        var sumOnTime = 0, sumAvgDev = 0, sumVehicles = 0, sumBunching = 0;
-        var worstOnTime = 101, worstHour = '';
-        var servedHours = 0;
-        for (var i = 0; i < points.length; i++) {
-            var p = points[i];
+        let sumOnTime = 0, sumAvgDev = 0, sumVehicles = 0, sumBunching = 0;
+        let worstOnTime = 101, worstHour = ''; // worstHour kept for a future label; not rendered yet
+        let servedHours = 0;
+        for (const p of points) {
             sumVehicles += p.vehicle_count;
             sumBunching += p.bunching_events;
             if (p.vehicle_count === 0) continue;
@@ -263,17 +290,17 @@ html += '</div>';
                 worstHour = p.hour;
             }
         }
-        var n = points.length;
-        var hasService = servedHours > 0;
-        var avgOnTime = hasService ? (sumOnTime / servedHours).toFixed(1) : null;
-        var avgDev = hasService ? Math.round(sumAvgDev / servedHours) : 0;
+        const n = points.length;
+        const hasService = servedHours > 0;
+        const avgOnTime = hasService ? (sumOnTime / servedHours).toFixed(1) : null;
+        const avgDev = hasService ? Math.round(sumAvgDev / servedHours) : 0;
 
-        var html = '';
+        let html = '';
         html += '<div class="history-chart-wrap"><canvas id="history-chart"></canvas></div>';
 
         html += '<div class="history-summary">';
         html += '<span class="label">Avg on-time</span><span class="value" style="color:' +
-            (hasService ? pctColor(parseFloat(avgOnTime)) : '#888') + '">' +
+            (hasService ? pctColor(parseFloat(avgOnTime ?? '0')) : '#888') + '">' +
             (hasService ? avgOnTime + '%' : '\u2014') + '</span>';
         html += '<span class="label">Avg deviation</span><span class="value">' +
             (hasService ? formatSeconds(avgDev) : '\u2014') + '</span>';
@@ -287,91 +314,57 @@ html += '</div>';
         html += '</div>';
 
         // Day selector
-        var dayOptions = [1, 3, 7, 14];
         html += '<div class="history-days">';
-        for (var d = 0; d < dayOptions.length; d++) {
-            var active = dayOptions[d] === historyDays ? ' active' : '';
-            html += '<button class="day-btn' + active + '" data-days="' + dayOptions[d] + '">' +
-                dayOptions[d] + 'd</button>';
+        for (const dayOption of DAY_OPTIONS) {
+            const active = dayOption === historyDays ? ' active' : '';
+            html += '<button class="day-btn' + active + '" data-days="' + dayOption + '">' +
+                dayOption + 'd</button>';
         }
         html += '</div>';
 
         content.innerHTML = html;
 
-        // Draw the chart via history-chart.js (days drives the bucket size)
-        if (window.drawChart) {
-            window.drawChart('history-chart', points, historyDays);
-        }
+        // Draw the chart (days drives the bucket size)
+        drawChart('history-chart', points, historyDays);
     }
 
-    function showLoading() {
-        results.innerHTML = '<div style="color:#888">Searching\u2026</div>';
-        results.classList.add('open');
-    }
-
-    async function search(query) {
-        var routeId = query.trim();
-        if (!routeId) return;
-
-        if (!VALID_ROUTE.test(routeId)) {
-            showError('Invalid route format. Use only letters, numbers, and hyphens.');
-            return;
-        }
-
-        showLoading();
-
-        try {
-            var resp = await fetch(API_BASE + encodeURIComponent(routeId) + API_SUFFIX);
-            if (!resp.ok) {
-                if (resp.status === 400) {
-                    showError('Invalid route ID.');
-                } else {
-                    showError('Server error (HTTP ' + resp.status + ')');
-                }
-                return;
-            }
-            var data = await resp.json();
-            lastSearchedData = data;
-            renderResults(data);
-        } catch (err) {
-            showError('Could not reach the server. Is the API running?');
-        }
-    }
-
-    // --- Filter button handler ------------------------------------------
+    // --- Filter button handler --------------------------------------------
 
     results.addEventListener('click', function (e) {
-        if (e.target && e.target.classList.contains('route-filter-btn')) {
+        const el = e.target instanceof HTMLElement ? e.target : null;
+        if (el && el.classList.contains('route-filter-btn')) {
             e.stopPropagation();
-            var action = e.target.getAttribute('data-action');
-            if (action === 'clear' && window.clearRouteFilter) {
-                window.clearRouteFilter();
-            } else if (action === 'filter' && window.filterByRoute) {
-                var routeId = e.target.getAttribute('data-route');
-                window.filterByRoute(routeId);
+            const action = el.getAttribute('data-action');
+            if (action === 'clear') {
+                clearRouteFilter();
+            } else if (action === 'filter') {
+                filterByRoute(el.getAttribute('data-route'));
             }
             // Re-render to update button state
             if (lastSearchedData) renderResults(lastSearchedData);
         }
     });
 
-    // --- History toggle + day selector handlers --------------------------
+    // --- History toggle + day selector handlers ----------------------------
 
     results.addEventListener('click', function (e) {
+        const el = e.target instanceof HTMLElement ? e.target : null;
+        if (!el) return;
+
         // History expand/collapse
-        if (e.target && e.target.classList.contains('history-toggle-btn')) {
+        if (el.classList.contains('history-toggle-btn')) {
             e.stopPropagation();
-            var routeId = e.target.getAttribute('data-route');
-            var content = results.querySelector('.history-content');
-            if (!content) return;
+            const routeId = el.getAttribute('data-route');
+            const content = results.querySelector<HTMLElement>('.history-content');
+            if (!content || !routeId) return;
 
             if (historyOpen) {
                 content.style.display = 'none';
-                e.target.classList.remove('active');
+                el.classList.remove('active');
                 historyOpen = false;
             } else {
                 content.style.display = 'block';
-                e.target.classList.add('active');
+                el.classList.add('active');
                 historyOpen = true;
                 fetchHistory(routeId, historyDays);
             }
@@ -379,9 +372,9 @@ html += '</div>';
         }
 
         // History help toggle (the small ? next to the trend button)
-        if (e.target && e.target.classList.contains('history-help-btn')) {
+        if (el.classList.contains('history-help-btn')) {
             e.stopPropagation();
-            var helpDiv = results.querySelector('.history-help');
+            const helpDiv = results.querySelector<HTMLElement>('.history-help');
             if (helpDiv) {
                 helpDiv.style.display = helpDiv.style.display === 'none' ? 'block' : 'none';
             }
@@ -389,31 +382,32 @@ html += '</div>';
         }
 
         // Day selector buttons
-        if (e.target && e.target.classList.contains('day-btn')) {
+        if (el.classList.contains('day-btn')) {
             e.stopPropagation();
-            var days = parseInt(e.target.getAttribute('data-days'), 10);
+            const days = parseInt(el.getAttribute('data-days') ?? '', 10);
             if (isNaN(days)) return;
 
             // Update active state
-            var allBtns = results.querySelectorAll('.day-btn');
-            for (var i = 0; i < allBtns.length; i++) allBtns[i].classList.remove('active');
-            e.target.classList.add('active');
+            for (const b of results.querySelectorAll('.day-btn')) {
+                b.classList.remove('active');
+            }
+            el.classList.add('active');
 
             // Re-fetch with new day range
-            var toggleBtn = results.querySelector('.history-toggle-btn');
-            if (toggleBtn) {
-                var rId = toggleBtn.getAttribute('data-route');
+            const toggleBtn = results.querySelector<HTMLElement>('.history-toggle-btn');
+            const rId = toggleBtn ? toggleBtn.getAttribute('data-route') : null;
+            if (toggleBtn && rId) {
                 fetchHistory(rId, days);
             }
         }
     });
 
-    // --- Input events ---------------------------------------------------
+    // --- Input events -----------------------------------------------------
 
     input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') {
             e.preventDefault();
-            search(input.value);
+            void search(input.value);
         }
     });
-})();
+}

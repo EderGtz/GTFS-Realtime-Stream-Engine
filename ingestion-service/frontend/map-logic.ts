@@ -1,3 +1,30 @@
+/**
+ * Stateful core behind the live transit map.
+ *
+ * WHAT THIS FILE OWNS:
+ *   - marker caches (delay markers + bunching events) and their eviction
+ *   - popup HTML builders for both marker kinds
+ *   - the data-age indicator and the stats panel
+ *   - the route filter (dim everything except one route)
+ *
+ * Everything here is exercised by tests/api/map-logic.test.ts, which mocks
+ * the Leaflet global (`L`) — every function that touches Leaflet receives
+ * its layer objects as parameters for exactly that reason.
+ */
+
+/// <reference path="./globals.d.ts" />
+
+// Shared contract types — the SAME interfaces the API declares. If the API
+// shape changes, this module and every consumer fail to compile.
+import type { BunchingEntry, DelayEntry } from '../src/api/types.js';
+import { formatAge } from './lib/format.js';
+
+// Leaflet TYPE names (values still come from the `L` CDN global declared in
+// globals.d.ts). Named type imports avoid shadowing the `L` value binding.
+import type { CircleMarker, LayerGroup, Polyline } from 'leaflet';
+
+// ── Constants ────────────────────────────────────────────────────────────
+
 const REFRESH_INTERVAL_MS = 30_000;
 
 // How long before the data is considered stale (matches LIVE_WINDOW_MS / 2
@@ -12,25 +39,59 @@ const STALE_OPACITY   = 0.35;
 const BUNCHING_COLOR        = '#9b59b6';
 const BUNCHING_BORDER_COLOR = '#6c3483';
 
-// Boston city center
-const MAP_CENTER = [42.3601, -71.0589];
+// Boston city center. Typed as a LatLngTuple so Leaflet's strict typings
+// accept it (a widened number[] would not).
+const MAP_CENTER: [number, number] = [42.3601, -71.0589];
 const MAP_ZOOM = 12;
 
-// State
+// ── Types ────────────────────────────────────────────────────────────────
 
-// Map<vehicleId, { marker, misses }>
-const delayCache = new Map();
+/** A cached delay marker plus its eviction bookkeeping. */
+interface DelayMarkerEntry {
+    marker: CircleMarker;
+    /** Consecutive refreshes this vehicle was absent from. */
+    misses: number;
+    route_id: string | null;
+}
 
-// Map<bunchKey, { markers: [circleA, circleB, line?], misses }>
-const bunchingCache = new Map();
+/**
+ * A cached bunching event. Exactly three slots: circle for vehicle A,
+ * circle for vehicle B, and the connecting polyline. Any of them may be
+ * null when the vehicle's position was unavailable at creation time.
+ */
+interface BunchingMarkerEntry {
+    markers: [CircleMarker | null, CircleMarker | null, Polyline | null];
+    /** Consecutive refreshes this event was absent from. */
+    misses: number;
+    route_id: string | null;
+}
 
-let lastRefreshTime = null;
-let ageTimer = null;
-let activeRouteFilter = null;  // null = show all, string = route_id to highlight
+/** Leaflet position tuple ([lat, lon] — Leaflet order, not GeoJSON order). */
+type LatLon = [number, number];
 
-// Helpers
+/**
+ * Input accepted by formatBunchingPopup. The API contract (BunchingEntry)
+ * has no route_long_name, but the original popup code used the
+ * `route_long_name || route_id` fallback and the tests exercise it — the
+ * optional enrichment keeps that behavior available if the API ever adds it.
+ */
+type BunchingPopupEntry = BunchingEntry & { route_long_name?: string | null };
 
-function deviationColor(seconds) {
+// ── State ────────────────────────────────────────────────────────────────
+
+// Map<vehicleId, DelayMarkerEntry>
+const delayCache = new Map<string, DelayMarkerEntry>();
+
+// Map<bunchKey, BunchingMarkerEntry>
+const bunchingCache = new Map<string, BunchingMarkerEntry>();
+
+let lastRefreshTime: Date | null = null;
+let ageTimer: ReturnType<typeof setInterval> | null = null;
+let activeRouteFilter: string | null = null;  // null = show all, string = route_id to highlight
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+function deviationColor(seconds: number): string {
     if (seconds < -120) return '#3498db';   // early
     if (seconds <= 120)  return '#2ecc71';  // on time
     if (seconds <= 300)  return '#f1c40f';  // slightly late
@@ -38,39 +99,28 @@ function deviationColor(seconds) {
     return '#e74c3c';                       // very late
 }
 
-function deviationLabel(seconds) {
+function deviationLabel(seconds: number): string {
     const absMin = Math.abs(Math.round(seconds / 60));
     if (seconds < -120) return `${absMin} min early`;
     if (seconds <= 120)  return 'on time';
     return `${absMin} min late`;
 }
 
-function formatAge(ms) {
-    if (ms < 1000) return 'just now';
+// formatAge() lives in lib/format.ts (shared with other panels).
 
-    const totalSec = Math.floor(ms / 1000);
-    
-    if (totalSec < 60) return `${totalSec}s`;
-    
-    const min = Math.floor(totalSec / 60);
-    const sec = totalSec % 60;
-   
-    return `${min}m ${sec}s`;
-}
+// ── Cache keys ───────────────────────────────────────────────────────────
 
-// Cache keys
-
-function delayMarkerKey(entry) {
+function delayMarkerKey(entry: DelayEntry): string {
     return entry.vehicle_id;
 }
 
-function bunchingKey(entry) {
+function bunchingKey(entry: BunchingEntry): string {
     return `${entry.route_id}:${entry.vehicle_a}:${entry.vehicle_b}`;
 }
 
-// Popup formatters
+// ── Popup formatters ─────────────────────────────────────────────────────
 
-function formatPopup(entry) {
+function formatPopup(entry: DelayEntry): string {
     const routeName = entry.route_long_name || entry.route_id || 'Unknown route';
     const dev = deviationLabel(entry.deviation_seconds);
     return `
@@ -84,10 +134,12 @@ function formatPopup(entry) {
     `;
 }
 
-function formatBunchingPopup(entry) {
+function formatBunchingPopup(entry: BunchingPopupEntry): string {
     const routeName = entry.route_long_name || entry.route_id || 'Unknown route';
     const dist = Math.round(entry.min_distance_meters);
-    const durMs = new Date(entry.end_time) - new Date(entry.start_time);
+    // .getTime() is required for the subtraction to type-check; the runtime
+    // value is identical to the old `new Date(a) - new Date(b)` coercion.
+    const durMs = new Date(entry.end_time).getTime() - new Date(entry.start_time).getTime();
     const durMin = Math.floor(durMs / 60000);
     const durSec = Math.floor((durMs % 60000) / 1000);
     const durLabel = durMin > 0 ? `${durMin}m ${durSec}s` : `${durSec}s`;
@@ -120,15 +172,7 @@ function formatBunchingPopup(entry) {
     `;
 }
 
-// Data fetching
-
-async function fetchLiveData(apiUrl) {
-    const resp = await fetch(apiUrl);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return resp.json();
-}
-
-// Vehicle position index
+// ── Vehicle position index ───────────────────────────────────────────────
 
 /**
  * Deduplicate delays by vehicle_id (keep the most recent per vehicle),
@@ -136,11 +180,14 @@ async function fetchLiveData(apiUrl) {
  *
  * Returns { uniqueDelays, positions }.
  */
-function buildVehiclePositions(delays) {
+function buildVehiclePositions(delays: DelayEntry[]): {
+    uniqueDelays: DelayEntry[];
+    positions: Map<string, LatLon>;
+} {
     // Deduplicate: when a vehicle has multiple deviation documents (one per
     // stop it visited), keep only the most recent one: that's where the
     // vehicle actually is right now.
-    const latestByVehicle = new Map();
+    const latestByVehicle = new Map<string, DelayEntry>();
     for (const d of delays) {
         const existing = latestByVehicle.get(d.vehicle_id);
         if (!existing || new Date(d.actual_at) > new Date(existing.actual_at)) {
@@ -150,7 +197,7 @@ function buildVehiclePositions(delays) {
 
     const uniqueDelays = [...latestByVehicle.values()];
 
-    const positions = new Map();
+    const positions = new Map<string, LatLon>();
     for (const d of uniqueDelays) {
         if (d.location && d.location.coordinates) {
             const [lon, lat] = d.location.coordinates;
@@ -161,9 +208,15 @@ function buildVehiclePositions(delays) {
     return { uniqueDelays, positions };
 }
 
-// Delay markers
+// ── Delay markers ────────────────────────────────────────────────────────
 
-function createDelayMarker(delay, position, color, popup, delayLayer) {
+function createDelayMarker(
+    delay: DelayEntry,
+    position: LatLon,
+    color: string,
+    popup: string,
+    delayLayer: LayerGroup,
+): DelayMarkerEntry {
     const marker = L.circleMarker(position, {
         radius: 6,
         fillColor: color,
@@ -177,13 +230,19 @@ function createDelayMarker(delay, position, color, popup, delayLayer) {
     return { marker, misses: 0, route_id: delay.route_id || null };
 }
 
-function updateDelayMarker(cacheEntry, position, color, popup, routeId) {
+function updateDelayMarker(
+    cacheEntry: DelayMarkerEntry,
+    position: LatLon,
+    color: string,
+    popup: string,
+    routeId?: string | null,
+): void {
     const { marker } = cacheEntry;
     marker.setLatLng(position);
     marker.setStyle({ fillColor: color });
     marker.setPopupContent(popup);
     if (routeId !== undefined) cacheEntry.route_id = routeId;
-    var dimmed = activeRouteFilter && cacheEntry.route_id !== activeRouteFilter;
+    const dimmed = Boolean(activeRouteFilter && cacheEntry.route_id !== activeRouteFilter);
     marker.setStyle({ fillOpacity: dimmed ? FILTER_DIM_OPACITY : 0.85, opacity: dimmed ? FILTER_DIM_STROKE : 1 });
     cacheEntry.misses = 0;
 }
@@ -192,8 +251,8 @@ function updateDelayMarker(cacheEntry, position, color, popup, routeId) {
  * Create / update delay markers from the current delays array.
  * Returns the Set of seen vehicle IDs.
  */
-function updateDelayMarkers(delays, delayLayer) {
-    const seen = new Set();
+function updateDelayMarkers(delays: DelayEntry[], delayLayer: LayerGroup): Set<string> {
+    const seen = new Set<string>();
 
     for (const d of delays) {
         if (!d.location || !d.location.coordinates) continue;
@@ -202,23 +261,23 @@ function updateDelayMarkers(delays, delayLayer) {
         seen.add(key);
 
         const [lon, lat] = d.location.coordinates;
-        const position = [lat, lon];
+        const position: LatLon = [lat, lon];
         const color = deviationColor(d.deviation_seconds);
         const popup = formatPopup(d);
 
-        if (delayCache.has(key)) {
-            updateDelayMarker(delayCache.get(key), position, color, popup, d.route_id);
+        const cached = delayCache.get(key);
+        if (cached) {
+            updateDelayMarker(cached, position, color, popup, d.route_id);
         } else {
             delayCache.set(key, createDelayMarker(d, position, color, popup, delayLayer));
         }
     }
 
     evictStaleDelays(seen, delayLayer);
-    // delayLayer.refreshClusters();
     return seen;
 }
 
-function evictStaleDelays(seenIds, delayLayer) {
+function evictStaleDelays(seenIds: Set<string>, delayLayer: LayerGroup): void {
     for (const [key, entry] of delayCache) {
         if (seenIds.has(key)) continue;
 
@@ -236,10 +295,16 @@ function evictStaleDelays(seenIds, delayLayer) {
     }
 }
 
-// Bunching markers
+// ── Bunching markers ─────────────────────────────────────────────────────
 
-function createBunchingEvent(bunching, positionA, positionB, popup, bunchingLayer) {
-    const markers = [null, null, null];
+function createBunchingEvent(
+    bunching: BunchingEntry,
+    positionA: LatLon | undefined,
+    positionB: LatLon | undefined,
+    popup: string,
+    bunchingLayer: LayerGroup,
+): BunchingMarkerEntry {
+    const markers: [CircleMarker | null, CircleMarker | null, Polyline | null] = [null, null, null];
 
     const opts = {
         radius: 7,
@@ -273,10 +338,16 @@ function createBunchingEvent(bunching, positionA, positionB, popup, bunchingLaye
     return { markers, misses: 0, route_id: bunching.route_id || null };
 }
 
-function updateBunchingEvent(entry, positionA, positionB, popup, routeId) {
+function updateBunchingEvent(
+    entry: BunchingMarkerEntry,
+    positionA: LatLon | undefined,
+    positionB: LatLon | undefined,
+    popup: string,
+    routeId?: string | null,
+): void {
     const [circleA, circleB, line] = entry.markers;
     if (routeId !== undefined) entry.route_id = routeId;
-    var dimmed = activeRouteFilter && entry.route_id !== activeRouteFilter;
+    const dimmed = Boolean(activeRouteFilter && entry.route_id !== activeRouteFilter);
 
     if (circleA && positionA) {
         circleA.setLatLng(positionA);
@@ -306,8 +377,12 @@ function updateBunchingEvent(entry, positionA, positionB, popup, routeId) {
     entry.misses = 0;
 }
 
-function updateBunchingMarkers(bunchingEvents, vehiclePositions, bunchingLayer) {
-    const seen = new Set();
+function updateBunchingMarkers(
+    bunchingEvents: BunchingEntry[],
+    vehiclePositions: Map<string, LatLon>,
+    bunchingLayer: LayerGroup,
+): Set<string> {
+    const seen = new Set<string>();
 
     for (const b of bunchingEvents) {
         const key = bunchingKey(b);
@@ -317,8 +392,9 @@ function updateBunchingMarkers(bunchingEvents, vehiclePositions, bunchingLayer) 
         const positionB = vehiclePositions.get(b.vehicle_b);
         const popup = formatBunchingPopup(b);
 
-        if (bunchingCache.has(key)) {
-            updateBunchingEvent(bunchingCache.get(key), positionA, positionB, popup, b.route_id);
+        const cached = bunchingCache.get(key);
+        if (cached) {
+            updateBunchingEvent(cached, positionA, positionB, popup, b.route_id);
         } else {
             bunchingCache.set(key,
                 createBunchingEvent(b, positionA, positionB, popup, bunchingLayer)
@@ -332,16 +408,16 @@ function updateBunchingMarkers(bunchingEvents, vehiclePositions, bunchingLayer) 
 
 /**
  * Evicts or visually dims stale bunching events that were missing from the latest API update.
- * Implements a grace period (GRACE_REFRESHES) to prevent visual flickering on the map 
+ * Implements a grace period (GRACE_REFRESHES) to prevent visual flickering on the map
  * caused by temporary processing lags or momentary GPS signal loss.
- * 
+ *
  * If an event misses too many consecutive updates, its markers are removed from the map and cache.
  * Otherwise, its opacity is reduced to indicate that the data is becoming stale.
  *
- * @param {Set<string>} seenKeys - A set containing the unique keys of bunching events received in the current refresh.
- * @param {L.LayerGroup} bunchingLayer - The Leaflet layer group containing the bunching markers and polylines.
+ * @param seenKeys - A set containing the unique keys of bunching events received in the current refresh.
+ * @param bunchingLayer - The Leaflet layer group containing the bunching markers and polylines.
  */
-function evictStaleBunching(seenKeys, bunchingLayer) {
+function evictStaleBunching(seenKeys: Set<string>, bunchingLayer: LayerGroup): void {
     for (const [key, entry] of bunchingCache) {
         if (seenKeys.has(key)) continue;
 
@@ -364,14 +440,14 @@ function evictStaleBunching(seenKeys, bunchingLayer) {
     }
 }
 
-// Data-age indicator
+// ── Data-age indicator ───────────────────────────────────────────────────
 
 /**
  * Updates the UI data-age indicator to show how old the currently displayed map data is.
- * Acts as a visual health monitor, changing colors (fresh -> warning -> stale) 
+ * Acts as a visual health monitor, changing colors (fresh -> warning -> stale)
  * as the data ages past predefined thresholds to warn users of potential connection or pipeline failures.
  */
-function updateAgeIndicator() {
+function updateAgeIndicator(): void {
     const ageEl = document.getElementById('data-age');
     if (!ageEl || !lastRefreshTime) return;
 
@@ -386,14 +462,14 @@ function updateAgeIndicator() {
     }
 }
 
-function startAgeTimer() {
+function startAgeTimer(): void {
     if (ageTimer) return;
     ageTimer = setInterval(updateAgeIndicator, 1000);
 }
 
-// Stats
+// ── Stats ────────────────────────────────────────────────────────────────
 
-function updateStats(uniqueDelays, bunchingCount) {
+function updateStats(uniqueDelays: DelayEntry[], bunchingCount: number): void {
     lastRefreshTime = new Date();
 
     const statsEl = document.getElementById('stats');
@@ -411,9 +487,9 @@ function updateStats(uniqueDelays, bunchingCount) {
     updateAgeIndicator();
 }
 
-// Error handling
+// ── Error handling ───────────────────────────────────────────────────────
 
-function handleRefreshError(err) {
+function handleRefreshError(err: unknown): void {
     console.error('Failed to refresh:', err);
 
     const statsEl = document.getElementById('stats');
@@ -430,7 +506,7 @@ function handleRefreshError(err) {
     }
 }
 
-// Route filter
+// ── Route filter ─────────────────────────────────────────────────────────
 
 const FILTER_DIM_OPACITY = 0.12;
 const FILTER_DIM_STROKE = 0.2;
@@ -439,7 +515,7 @@ const FILTER_DIM_STROKE = 0.2;
  * Apply the active route filter to all delay markers.
  * Called after every refresh cycle so new markers respect the filter.
  */
-function applyRouteFilter() {
+function applyRouteFilter(): void {
     if (!activeRouteFilter) return;
     for (const [, entry] of delayCache) {
         if (entry.route_id === activeRouteFilter) {
@@ -449,7 +525,7 @@ function applyRouteFilter() {
         }
     }
     for (const [, entry] of bunchingCache) {
-        var match = entry.route_id === activeRouteFilter;
+        const match = entry.route_id === activeRouteFilter;
         for (const m of entry.markers) {
             if (!m) continue;
             if (m instanceof L.Polyline && !(m instanceof L.Polygon)) {
@@ -465,7 +541,7 @@ function applyRouteFilter() {
  * Filter the map to show only markers for a specific route.
  * Other markers are dimmed to near-invisible.
  */
-function filterByRoute(routeId) {
+function filterByRoute(routeId: string | null): void {
     activeRouteFilter = routeId;
     applyRouteFilter();
     updateFilterBanner();
@@ -474,7 +550,7 @@ function filterByRoute(routeId) {
 /**
  * Clear the route filter — show all markers at full opacity.
  */
-function clearRouteFilter() {
+function clearRouteFilter(): void {
     activeRouteFilter = null;
     for (const [, entry] of delayCache) {
         entry.marker.setStyle({ fillOpacity: 0.85, opacity: 1 });
@@ -492,13 +568,13 @@ function clearRouteFilter() {
     updateFilterBanner();
 }
 
-function getActiveRouteFilter() { return activeRouteFilter; }
+function getActiveRouteFilter(): string | null { return activeRouteFilter; }
 
 /**
  * Show/hide a small banner indicating an active route filter.
  * Uses addEventListener instead of inline onclick — CSP blocks inline handlers.
  */
-function updateFilterBanner() {
+function updateFilterBanner(): void {
     let banner = document.getElementById('route-filter-banner');
     if (!activeRouteFilter) {
         if (banner) banner.style.display = 'none';
@@ -514,10 +590,10 @@ function updateFilterBanner() {
     }
     // Build content without inline handlers
     banner.textContent = '';
-    var text = document.createElement('span');
+    const text = document.createElement('span');
     text.innerHTML = 'Showing route <strong>' + activeRouteFilter + '</strong> ';
     banner.appendChild(text);
-    var closeBtn = document.createElement('button');
+    const closeBtn = document.createElement('button');
     closeBtn.textContent = '\u00d7';
     closeBtn.title = 'Show all routes';
     closeBtn.style.cssText = 'background:none;border:none;color:#fff;cursor:pointer;font-size:14px;padding:0 2px;';
@@ -526,12 +602,12 @@ function updateFilterBanner() {
     banner.style.display = 'flex';
 }
 
-// Exports
+// ── Test helpers ─────────────────────────────────────────────────────────
 
 /**
  * Reset mutable state — intended for tests between runs.
  */
-function resetState() {
+function resetState(): void {
     delayCache.clear();
     bunchingCache.clear();
     lastRefreshTime = null;
@@ -542,8 +618,10 @@ function resetState() {
     }
 }
 
-function getLastRefreshTime() { return lastRefreshTime; }
-function setLastRefreshTime(v) { lastRefreshTime = v; }
+function getLastRefreshTime(): Date | null { return lastRefreshTime; }
+function setLastRefreshTime(v: Date | null): void { lastRefreshTime = v; }
+
+// ── Exports ──────────────────────────────────────────────────────────────
 
 export {
     // Constants
@@ -564,14 +642,12 @@ export {
     // Helpers
     deviationColor,
     deviationLabel,
-    formatAge,
     delayMarkerKey,
     bunchingKey,
     formatPopup,
     formatBunchingPopup,
 
     // Data
-    fetchLiveData,
     buildVehiclePositions,
 
     // Delay markers
@@ -593,7 +669,6 @@ export {
     handleRefreshError,
 
     // Route filter
-    activeRouteFilter,
     applyRouteFilter,
     filterByRoute,
     clearRouteFilter,
@@ -604,3 +679,5 @@ export {
     getLastRefreshTime,
     setLastRefreshTime,
 };
+
+export type { DelayMarkerEntry, BunchingMarkerEntry, LatLon };

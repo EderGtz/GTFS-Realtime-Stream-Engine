@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx --env-file=.env src/index.ts",
     "build": "tsc",
-    "build:frontend": "tsc --noEmit -p tsconfig.frontend.json && esbuild frontend/map.ts --bundle --format=esm --outfile=src/public/dist/map.js --sourcemap",
+    "build:frontend": "tsc --noEmit -p frontend && esbuild frontend/map.ts --bundle --format=esm --outfile=src/public/dist/map.js --sourcemap",
     "dev:frontend": "esbuild frontend/map.ts --bundle --format=esm --outfile=src/public/dist/map.js --sourcemap --watch",
     "start": "node --env-file=.env dist/index.js",
     "generate:types": "mkdir -p src/generated && pbjs -t static-module -w es6 -o src/generated/gtfs-realtime.js src/proto/gtfs-realtime.proto && pbts -o src/generated/gtfs-realtime.d.ts src/generated/gtfs-realtime.js",
