@@ -229,6 +229,13 @@ cd archive-consumer && go run .
 The map is at `http://localhost:3000/map` and the API at
 `http://localhost:3000/v1/status/live`.
 
+The map frontend is TypeScript (`ingestion-service/frontend/`) bundled to
+`src/public/dist/map.js` by `npm run build:frontend` — a `tsc --noEmit`
+type-check against the shared API contract (`src/api/types.ts`) followed by
+a single esbuild command. `npm run start:api` runs it automatically; while
+iterating on the frontend use `npm run dev:frontend` (esbuild watch mode)
+and reload the browser.
+
 **Why this approach:** each service runs directly on the host, so changes to source code take effect on the next restart, so no Docker build step is required. If you're iterating on the analytics engine's bunching detection logic, for example, you edit the Python file, `Ctrl+C` the analytics terminal, run it again, and see the result immediately.
 
 ### Local — Running as Docker Compose (all containers)
@@ -280,6 +287,12 @@ gtfs-realtime-stream-engine/
 │   ├── Dockerfile                # Multi-stage: poller (dist/src/index.js)
 │   ├── Dockerfile.api            # Multi-stage: API + static map files
 │   ├── .dockerignore
+│   ├── frontend/                   # Map page TypeScript modules (Phase 5)
+│   │   ├── map.ts                    # Bundle entry: Leaflet map + 30s refresh loop
+│   │   ├── map-logic.ts              # Marker caches, popups, stats, route filter
+│   │   ├── lib/                      # Shared: api.ts (typed fetch), format.ts, dom.ts
+│   │   ├── charts/                   # history-chart.ts (Chart.js trend + bucketing)
+│   │   └── panels/                   # route-search.ts, info-toggle.ts
 │   ├── src/
 │   │   ├── index.ts                # Entry point: starts poller
 │   │   ├── config.ts               # Environment-based configuration
@@ -287,7 +300,7 @@ gtfs-realtime-stream-engine/
 │   │   ├── ingestion/                # Poller, decoder, validator, Kafka producer
 │   │   ├── db/                       # MongoDB read connection (Phase 4)
 │   │   ├── api/                      # Express API: server, routes, middleware (Phase 4)
-│   │   ├── public/                   # Leaflet map files (Phase 5)
+│   │   ├── public/                   # Served statics: map.html, map.css + built dist/map.js
 │   │   └── utils/                    # Structured logging
 │   └── tests/                        # unit + integration (testcontainers)
 │
