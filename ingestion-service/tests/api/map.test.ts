@@ -72,9 +72,12 @@ describe('GET /map', () => {
         expect(res.headers.location).toBe('/map');
     });
 
-    test('serves map.js as static file', async () => {
+    test('serves the built frontend bundle as static file', async () => {
+        // /dist/map.js is the esbuild output of frontend/map.ts (built by
+        // `npm run build:frontend`, which the pretest hook runs). The bundle
+        // must contain the live-data endpoint the map polls.
         const app = createApp();
-        const res = await request(app).get('/map.js');
+        const res = await request(app).get('/dist/map.js');
 
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toMatch(/javascript/);
@@ -88,16 +91,16 @@ describe('GET /map', () => {
         expect(res.text).toContain('id="info-toggle"');
         expect(res.text).toContain('id="info-panel"');
         expect(res.text).toContain('What are you looking at?');
-        expect(res.text).toContain('info-toggle.js');
+        // Single bundled module entry (info-toggle et al. are inside it now).
+        expect(res.text).toContain('/dist/map.js');
     });
 
-    test('serves info-toggle.js as static file', async () => {
+    test('serves map.css as static file', async () => {
         const app = createApp();
-        const res = await request(app).get('/info-toggle.js');
+        const res = await request(app).get('/map.css');
 
         expect(res.status).toBe(200);
-        expect(res.headers['content-type']).toMatch(/javascript/);
-        expect(res.text).toContain('info-toggle');
+        expect(res.headers['content-type']).toMatch(/css/);
     });
 });
 

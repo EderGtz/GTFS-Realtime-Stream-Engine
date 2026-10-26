@@ -2,8 +2,8 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
- * Tests for history-chart.js — drawChart(canvasId, points, days) and the
- * aggregateBuckets(points, bucketHours) helper.
+ * Tests for charts/history-chart.ts — drawChart(canvasId, points, days) and
+ * the aggregateBuckets(points, bucketHours) helper.
  *
  * Uses jsdom to verify the chart module's public API and lifecycle,
  * without requiring Chart.js to render actual pixels (which needs canvas).
@@ -36,13 +36,13 @@ afterEach(() => {
 });
 
 async function loadChart() {
-    await import('../../src/public/history-chart.js');
-    return (window as any).drawChart;
+    const mod = await import('../../frontend/charts/history-chart.ts');
+    return mod.drawChart;
 }
 
 async function loadAggregator() {
-    await import('../../src/public/history-chart.js');
-    return (window as any).aggregateBuckets;
+    const mod = await import('../../frontend/charts/history-chart.ts');
+    return mod.aggregateBuckets;
 }
 
 const samplePoints = [
@@ -88,7 +88,7 @@ function makeDays(n: number) {
 }
 
 describe('drawChart', () => {
-    test('is exposed as window.drawChart', async () => {
+    test('is exported from the chart module', async () => {
         const drawChart = await loadChart();
         expect(typeof drawChart).toBe('function');
     });

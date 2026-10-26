@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Unit tests for map-logic.js — the pure logic layer behind the
+ * Unit tests for map-logic.ts — the pure logic layer behind the
  * MBTA live transit map.
  *
  * Leaflet (L) is mocked since we run in jsdom, not a browser.
@@ -52,12 +52,13 @@ beforeEach(() => {
 
 // ── Import after global mock is set up ────────────────────────────────
 
-const mod = await import('../../src/public/map-logic.js');
+const mod = await import('../../frontend/map-logic.ts');
+const { fetchLiveData } = await import('../../frontend/lib/api.ts');
+const { formatAge } = await import('../../frontend/lib/format.ts');
 
 const {
     deviationColor,
     deviationLabel,
-    formatAge,
     formatPopup,
     formatBunchingPopup,
     delayMarkerKey,
@@ -74,7 +75,6 @@ const {
     updateStats,
     handleRefreshError,
     updateAgeIndicator,
-    fetchLiveData,
     resetState,
     getLastRefreshTime,
     setLastRefreshTime,
@@ -660,7 +660,7 @@ describe('handleRefreshError', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// fetchLiveData
+// fetchLiveData (lib/api.ts — typed fetch wrapper)
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('fetchLiveData', () => {
@@ -671,8 +671,10 @@ describe('fetchLiveData', () => {
             json: () => Promise.resolve(body),
         });
 
-        const result = await fetchLiveData('/v1/status/live');
+        const result = await fetchLiveData();
         expect(result).toEqual(body);
+        // The endpoint lives in lib/api.ts now — lock the URL.
+        expect(globalThis.fetch).toHaveBeenCalledWith('/v1/status/live');
     });
 
     test('throws on non-OK response', async () => {
@@ -681,7 +683,7 @@ describe('fetchLiveData', () => {
             status: 503,
         });
 
-        await expect(fetchLiveData('/v1/status/live'))
+        await expect(fetchLiveData())
             .rejects.toThrow('HTTP 503');
     });
 });
