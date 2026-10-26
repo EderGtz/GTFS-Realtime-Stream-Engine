@@ -5,11 +5,14 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.frontend.json ./
 COPY src/ ./src/
+COPY frontend/ ./frontend/
 
 RUN npm run generate:types
 RUN npm run build
+
+RUN npm run build:frontend
 
 RUN cp -r src/proto dist/src/proto
 RUN cp -r src/generated dist/src/generated
@@ -23,8 +26,9 @@ RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
 
-# Static map files (HTML, CSS, JS) served via express.static()
-COPY src/public/ ./dist/src/public/
+# Static map files (HTML, CSS) plus the built JS bundle, served via
+# express.static(). Copied from the builder so dist/map.js is included.
+COPY --from=builder /app/src/public/ ./dist/src/public/
 
 ENV NODE_ENV=production
 

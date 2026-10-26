@@ -10,6 +10,8 @@ node_modules/
 # Build and compilation outputs
 dist/
 build/
+# Frontend bundle output (npm run build:frontend -> esbuild)
+ingestion-service/src/public/dist/
 
 # Generated code and API schemas
 ingestion-service/src/generated/
