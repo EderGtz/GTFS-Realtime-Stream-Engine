@@ -64,3 +64,17 @@ If the archive consumer crashes before the commit, Kafka redelivers the batch af
 The active hour's file is plain NDJSON (appendable), so a crash leaves at most one partial line and every earlier line intact. Closed hours are gzipped exactly once via tmp-file + atomic rename; a `.ndjson.gz` file at its final name is always complete. On startup the service finalizes (gzips) any stale plain files and appends to the current hour's file if it already exists.
 
 **What the archive does NOT guarantee:** the caveats of Section 6 still apply — messages published while no consumer is running are lost once Kafka's retention window (72h) evicts them. The archive *extends* replayability far beyond 72h, but only for messages it actually received. Files are partitioned by archive write time (UTC), not vehicle event time.
+
+---
+
+## 8. Archive Compaction
+
+**Guarantee: Compaction is idempotent, and raw deletion is gated on verification.**
+
+The archive compactor (`archive-compactor/`, see `docs/archive-consumer.md`) folds fully-closed days of NDJSON.gz into zstd Parquet (`parquet/date=YYYY-MM-DD/`), keeping the source line verbatim in a `raw` column. Compaction is idempotent — re-folding a day reproduces the same output, and a day is only eligible once (older than 48h, every hourly file gzipped, no existing Parquet output).
+
+Raw files are deleted only after **both** gates pass: a fresh row-count verification (Parquet rows must equal raw lines, re-read from disk — not a marker file) and a grace period (`COMPACT_KEEP_RAW_DAYS`, default 7 days of mtime; `0` deletes immediately after verification). If verification fails — for example a corrupt truncated `.gz` — nothing is deleted and `--once` reports an error, so the raw tier always remains the safe copy.
+
+Schema evolution is non-breaking: unknown new fields survive verbatim in `raw`, and a malformed value in a known field degrades to NULL (`TRY_CAST`) rather than failing the whole compaction.
+
+**What the compactor does NOT guarantee:** it does not deduplicate the raw lines (the raw tier may already contain crash duplicates, and the Parquet row count mirrors the lines on disk, duplicates included). It does not re-partition by event time — `date=` follows the raw tier's write-time date.

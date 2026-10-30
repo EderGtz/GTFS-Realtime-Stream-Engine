@@ -115,6 +115,7 @@ see [`docs/archive-consumer.md`](docs/archive-consumer.md):
 | Data Store | MongoDB + PostgreSQL 16 | MongoDB: live state + geospatial (map queries). PostgreSQL: hourly history behind `GET /v1/routes/:id/history` |
 | Serving API | TypeScript, Node.js, Express | REST endpoint exposing computed metrics |
 | Archive | Go, `segmentio/kafka-go` | Second consumer group (`archive-group`): write raw messages verbatim to NDJSON.gz — [`docs/archive-consumer.md`](docs/archive-consumer.md) |
+| Archive Compactor | Python 3.12, DuckDB, `pyarrow` | Daily batch: fold closed NDJSON.gz days into zstd Parquet, verify, then delete raw — [`docs/archive-consumer.md`](docs/archive-consumer.md) |
 | Runtime | Docker Compose, Hetzner CX23 VPS | Full stack running 24/7 on a single server |
 
 **Why two databases (deliberate split, not a half-finished migration):** the live
@@ -326,6 +327,14 @@ gtfs-realtime-stream-engine/
 │   ├── config.go / env.go        # Fail-loud config + .env loader
 │   └── *_test.go                 # Unit + integration (testcontainers, KRaft)
 │
+├── archive-compactor/              # Roadmap #3 — Python compaction tier (docs/archive-consumer.md)
+│   ├── Dockerfile                # Python 3.12-slim + uv, layer-cached deps
+│   ├── src/main.py               # --once + daily loop, SIGTERM-clean shutdown
+│   ├── src/config.py             # envOrDefault config (ARCHIVE_DIR, COMPACT_*)
+│   ├── src/eligibility.py        # Which days are safe to compact
+│   ├── src/compact.py            # NDJSON.gz day → zstd Parquet; verify-then-delete
+│   └── tests/                    # pytest unit tests (no Docker)
+│
 ├── tests/
 │   ├── fixtures/gtfs/              # Shared real-world GTFS fixtures used by BOTH services' test suites
 │   └── contracts/                  # Shared API↔schema contracts (enforced by both test suites)
@@ -356,4 +365,4 @@ gtfs-realtime-stream-engine/
 | [`docs/kafkaIntegrationTestExplanation.md`](docs/kafkaIntegrationTestExplanation.md) | How the Kafka round-trip integration test works using testcontainers — spinning up a real broker, publishing, consuming, and verifying the message in CI. |
 | [`docs/number-flow-explained.md`](docs/number-flow-explained.md) | Why the stats panel, the API response, and the map show different counts — what each number represents and where it comes from in the pipeline. |
 | [`docs/multi-agency-vision.md`](docs/multi-agency-vision.md) | Long-term vision for turning the single-MBTA pipeline into a multi-agency platform with configurable connectors. |
-| [`docs/archive-consumer.md`](docs/archive-consumer.md) | Design, semantics, and operations for the Go archive consumer — the second Kafka consumer group that writes raw messages to NDJSON.gz. |
+| [`docs/archive-consumer.md`](docs/archive-consumer.md) | Design, semantics, and operations for the Go archive consumer and the Python compaction tier — the second Kafka consumer group that writes raw messages to NDJSON.gz, plus the daily verify-then-delete Parquet compaction. |

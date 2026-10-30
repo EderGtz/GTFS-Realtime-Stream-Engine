@@ -1,8 +1,8 @@
 # Archive Consumer
 
-**Status: IMPLEMENTED**. Everything in the "Design", "Semantics",
-and "Operations" sections below is built and tested. The "Planned" section at
-the end describes future work that does **not** exist yet.
+**Status: IMPLEMENTED** (Phase 1 consumer + Phase 2 compaction tier).
+Everything in the "Design", "Semantics", "Operations", and "Storage tiering"
+sections below is built and tested.
 
 A standalone Go service that consumes the same `raw.vehicle-positions` Kafka
 topic as the analytics engine, as a **second, independent consumer group**
@@ -140,14 +140,50 @@ Design informed by two real archivers (researched 2026-10-07):
 - **No retention policy**: files accumulate until disk says otherwise.
 - **Single writer per directory**: one consumer process per `ARCHIVE_DIR`.
 
-## Planned — NOT implemented: daily compaction to Parquet
+## Storage tiering: daily compaction to Parquet
 
-A second service (`archive-compactor/`, Python + DuckDB — both already
-analytics-engine dependencies) will fold complete days of NDJSON into one
-Hive-partitioned zstd Parquet file (`data/archive/parquet/date=YYYY-MM-DD/`),
-keeping a verbatim `raw` column for fidelity and schema evolution, then delete
-the raw day **only after row-count verification** (with a configurable grace
-period). Eligibility: days older than 48h whose hourly files are all finalized.
-Rationale: the raw tier is optimized for safe I/O, the Parquet tier for cheap
-historical analysis — the same raw-first-then-compact shape Jarvus runs in
-production. Until that exists, the gzipped NDJSON *is* the historical store.
+A second service (`archive-compactor/`, Python + DuckDB/pyarrow) folds complete
+days of NDJSON.gz into one Hive-partitioned zstd Parquet directory
+(`data/archive/parquet/date=YYYY-MM-DD/`) and, once verified, deletes the raw
+day it folded. The raw tier stays optimized for safe I/O; the Parquet tier is
+optimized for cheap historical analysis (DuckDB/pandas/Polars push the `date=`
+partition down and run SQL over a day in milliseconds).
+
+```
+data/archive/
+  2026-10-20/
+    00.ndjson.gz            ← raw tier: verbatim Kafka lines, one gz per closed hour
+  2026-10-30/
+    07.ndjson               ← active hour (transient, plain)
+  parquet/
+    date=2026-10-20/
+      data.parquet          ← compacted tier: one zstd Parquet file per day
+```
+
+**Fidelity — why the `raw` column exists.** Parquet is rigid; NDJSON is not.
+Every compacted row keeps a `raw` column holding the source line **byte for
+byte** (read as raw lines, never parsed-then-reserialized — reserialization
+drifts key order and number formatting). Alongside it sits a fixed schema of
+promoted columns: `agency_id`, `vehicle_id`, `trip_id`, `route_id`,
+`direction_id`, `location` (GeoJSON struct, `[lon, lat]` order preserved),
+`timestamp`, `bearing`, `speed`, `current_stop_sequence`, `stop_id`,
+`current_status`, `ingested_at`.
+
+**Schema evolution.** An unknown new field compacts fine and survives only in
+`raw`; a malformed *known* field degrades to NULL (`TRY_CAST`) instead of
+aborting the whole day's write. Replay back to NDJSON is `SELECT raw FROM ...`.
+
+**Eligibility** (a day is compacted only when all hold): older than 48h; every
+hourly file is `.gz` (no plain leftover); no existing Parquet output
+(idempotency — re-folding and re-running are no-ops).
+
+**Verify-then-delete.** Raw files are deleted only when a fresh re-count shows
+Parquet rows == raw lines, *and* the Parquet output is older than
+`COMPACT_KEEP_RAW_DAYS` (default 7; `0` = delete immediately after
+verification). A verification failure keeps the raw tier intact and makes
+`--once` exit non-zero, so the raw NDJSON remains the safe copy.
+
+**Running:** default loop mode (immediate pass on startup, then daily at
+~03:00 UTC); `--once` for a single pass. Env: `ARCHIVE_DIR`,
+`COMPACT_MIN_AGE_HOURS`, `COMPACT_KEEP_RAW_DAYS`. See also `docs/guarantees.md`
+§8.
