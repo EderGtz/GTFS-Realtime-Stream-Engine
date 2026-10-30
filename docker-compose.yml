@@ -179,6 +179,23 @@ services:
       kafka:
         condition: service_healthy
 
+  archive-compactor:
+    build:
+      context: ./archive-compactor
+      dockerfile: Dockerfile
+    container_name: gtfs_archive_compactor
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      ARCHIVE_DIR: /data/archive
+      COMPACT_MIN_AGE_HOURS: "48"
+      COMPACT_KEEP_RAW_DAYS: "7"
+    volumes:
+      - ./data/archive:/data/archive
+    depends_on:
+      archive:
+        condition: service_healthy
+
 volumes:
   mongodb_data:
   kafka_data:

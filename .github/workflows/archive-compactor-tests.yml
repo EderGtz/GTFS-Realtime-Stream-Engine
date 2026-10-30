@@ -1,0 +1,39 @@
+name: "CI: Code Quality & Tests for archive compactor"
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  code-quality:
+    name: Lint & Test Archive Compactor
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./archive-compactor
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    - name: Install dependencies
+      run: uv sync
+
+    - name: Run Linter (Ruff)
+      run: uv run ruff check src/ tests/
+
+    - name: Check Formatting (Ruff)
+      run: uv run ruff format --check src/ tests/
+
+    - name: Run Unit Tests (Pytest)
+      run: uv run pytest
