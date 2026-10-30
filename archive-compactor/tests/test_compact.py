@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import gzip
 import json
-from datetime import datetime
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -27,7 +28,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from compact import compact_day
+from compact import VerificationError, compact_day, delete_raw_day, verify_counts
 
 
 # Build a telemetry dict in the exact key order producer.ts emits (agency_id
@@ -388,3 +389,142 @@ def test_no_tmp_leftovers_after_success(tmp_path: Path):
     parquet_root = tmp_path / "parquet"
     leftovers = [p.name for p in parquet_root.iterdir()]
     assert leftovers == [f"date={DAY}"]
+
+
+# Verify-then-delete
+
+# Fixed "now" so grace-window arithmetic is exact, not wall-clock dependent. The
+# tests backdate dirs with os.utime relative to this instant.
+NOW = datetime(2026, 10, 27, 3, 0, 0, tzinfo=UTC)
+NOW_EPOCH = NOW.timestamp()
+
+
+def backdate_dir(path: Path, days: int) -> None:
+    """Set a dir's mtime to ``days`` days before the fixed NOW, via os.utime."""
+    older = NOW_EPOCH - days * 86400
+    os.utime(path, (older, older))
+
+
+def raw_files(tmp_path: Path, day: str) -> list[str]:
+    """Sorted names of the day's remaining raw ``.ndjson.gz`` files."""
+    return sorted(p.name for p in (tmp_path / day).glob("*.ndjson.gz"))
+
+
+def test_verify_counts_true_after_clean_compaction(tmp_path: Path):
+    """The independent re-count agrees when nothing went wrong (happy path)."""
+    _, _ = make_two_hour_day(tmp_path)
+    compact_day(tmp_path, DAY)
+    assert verify_counts(tmp_path, DAY) is True
+
+
+def test_verify_counts_false_when_source_corrupted(tmp_path: Path):
+    """A corrupt source fails the re-count closed, rather than crashing."""
+    _, _ = make_two_hour_day(tmp_path)
+    compact_day(tmp_path, DAY)
+
+    (tmp_path / DAY / "00.ndjson.gz").write_bytes(b"this is not a gzip stream")
+
+    assert verify_counts(tmp_path, DAY) is False
+
+
+def test_verification_failure_keeps_raw_and_raises(tmp_path: Path):
+    """(a) Verification failure → nothing deleted + VerificationError raised.
+
+    With ``keep_raw_days=0`` the grace window is open, so verification is the
+    only gate standing between the raw files and deletion — and it must fail.
+    """
+    _, _ = make_two_hour_day(tmp_path)
+    compact_day(tmp_path, DAY)
+    before = raw_files(tmp_path, DAY)
+
+    (tmp_path / DAY / "00.ndjson.gz").write_bytes(b"corrupt")
+
+    with pytest.raises(VerificationError):
+        delete_raw_day(tmp_path, DAY, keep_raw_days=0, now=NOW)
+
+    # Nothing was deleted: the raw tier is the safe copy and must survive.
+    assert raw_files(tmp_path, DAY) == before
+    assert (tmp_path / "parquet" / f"date={DAY}").is_dir()
+
+
+def test_fresh_parquet_not_deleted_during_grace(tmp_path: Path):
+    """(b) A newly-published Parquet is inside the grace window → kept raw."""
+    _, _ = make_two_hour_day(tmp_path)
+    compact_day(tmp_path, DAY)
+
+    # mtime == NOW → age 0, well inside a 7-day grace window.
+    os.utime(tmp_path / "parquet" / f"date={DAY}", (NOW_EPOCH, NOW_EPOCH))
+
+    deleted = delete_raw_day(tmp_path, DAY, keep_raw_days=7, now=NOW)
+
+    assert deleted == ()
+    assert raw_files(tmp_path, DAY) == ["00.ndjson.gz", "03.ndjson.gz"]
+
+
+def test_old_parquet_deleted_after_grace(tmp_path: Path):
+    """(b) Once the Parquet is older than the grace window, raw is deleted."""
+    _, _ = make_two_hour_day(tmp_path)
+    compact_day(tmp_path, DAY)
+
+    backdate_dir(tmp_path / "parquet" / f"date={DAY}", 8)  # 8 days > 7-day grace
+
+    deleted = delete_raw_day(tmp_path, DAY, keep_raw_days=7, now=NOW)
+
+    assert len(deleted) == 2
+    assert raw_files(tmp_path, DAY) == []
+    # The Parquet survives — only the raw tier goes.
+    assert (tmp_path / "parquet" / f"date={DAY}").is_dir()
+
+
+def test_delete_removes_exactly_that_days_files(tmp_path: Path):
+    """(c) Deleting one day touches only that day's hourly files, nothing else."""
+    other_day = "2026-10-21"
+    build_day(tmp_path, DAY, {"00": [FULL_LINE]})
+    build_day(tmp_path, other_day, {"00": [NULL_LINE]})
+    compact_day(tmp_path, DAY)
+    compact_day(tmp_path, other_day)
+
+    # Age both outputs past the grace window, but delete only DAY.
+    backdate_dir(tmp_path / "parquet" / f"date={DAY}", 8)
+    backdate_dir(tmp_path / "parquet" / f"date={other_day}", 8)
+
+    deleted = delete_raw_day(tmp_path, DAY, keep_raw_days=7, now=NOW)
+
+    assert [Path(p).name for p in deleted] == ["00.ndjson.gz"]
+    assert raw_files(tmp_path, DAY) == []
+    # The other day and both Parquet outputs are untouched.
+    assert raw_files(tmp_path, other_day) == ["00.ndjson.gz"]
+    assert (tmp_path / "parquet" / f"date={DAY}").is_dir()
+    assert (tmp_path / "parquet" / f"date={other_day}").is_dir()
+
+
+def test_rerun_after_success_is_noop(tmp_path: Path):
+    """(d) Deleting again after success is an idempotent no-op."""
+    _, _ = make_two_hour_day(tmp_path)
+    compact_day(tmp_path, DAY)
+    backdate_dir(tmp_path / "parquet" / f"date={DAY}", 8)
+
+    first = delete_raw_day(tmp_path, DAY, keep_raw_days=7, now=NOW)
+    assert len(first) == 2
+
+    second = delete_raw_day(tmp_path, DAY, keep_raw_days=7, now=NOW)
+    assert second == ()
+
+
+def test_keep_raw_days_zero_deletes_immediately(tmp_path: Path):
+    """``keep_raw_days=0`` skips the grace window entirely."""
+    _, _ = make_two_hour_day(tmp_path)
+    compact_day(tmp_path, DAY)
+
+    deleted = delete_raw_day(tmp_path, DAY, keep_raw_days=0, now=NOW)
+
+    assert len(deleted) == 2
+    assert raw_files(tmp_path, DAY) == []
+
+
+def test_delete_noop_without_parquet_output(tmp_path: Path):
+    """No Parquet → nothing was verified → raw stays (defensive no-op)."""
+    build_day(tmp_path, DAY, {"00": [FULL_LINE]})
+
+    assert delete_raw_day(tmp_path, DAY, keep_raw_days=0, now=NOW) == ()
+    assert raw_files(tmp_path, DAY) == ["00.ndjson.gz"]
