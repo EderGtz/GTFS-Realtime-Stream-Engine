@@ -27,7 +27,7 @@ from eligibility import PARQUET_DIR_NAME, PARQUET_DIR_PREFIX
 # byte for byte. Commas would split the line, which is exactly why the delimiter is
 # not the default comma.
 #
-# One raw line = one row in the temp table. The `WHERE raw <> ''` drops only a
+# One raw line = one row. The `WHERE raw <> ''` drops only a
 # hypothetical stray blank line (a file ending in '\n' does not produce one on
 # its own), and is a cheap correctness net rather than a load-bearing filter.
 _RAW_LINES_READ_SQL = """
@@ -48,17 +48,24 @@ def _sql_str(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def _build_raw_lines_table(con, glob_pattern: str) -> None:
-    """Materialize the day's raw lines into an in-memory temp table once.
-
-    Reading into a temp table (rather than a view) means the compressed input is
-    decompressed a single time, and both the line count and the COPY below
-    consume the in-memory rows, so there is no second pass over the .gz files.
+def _fold_hour(src_path: Path, dst_path: Path) -> int:
+    """Count one hour's raw lines and fold them into one Parquet file.
     """
-    con.execute(
-        "CREATE TEMP TABLE raw_lines AS "
-        + _RAW_LINES_READ_SQL.format(source=_sql_str(glob_pattern))
-    )
+    read_sql = _RAW_LINES_READ_SQL.format(source=_sql_str(str(src_path)))
+    con = duckdb.connect()
+    try:
+        con.execute("SET threads=1")
+        con.execute("SET preserve_insertion_order=false")
+        con.execute("SET temp_directory='/tmp/duckdb-spool'")
+        source_lines = con.execute(f"SELECT count(*) FROM ({read_sql}) t").fetchone()[0]
+        con.execute(
+            f"COPY (SELECT {_PROMOTED_COLUMNS_SQL} FROM ({read_sql}) t) "
+            f"TO {_sql_str(str(dst_path))} "
+            f"(FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 20000)"
+        )
+    finally:
+        con.close()
+    return source_lines
 
 
 def _parquet_dir(archive_dir: Path, day: str) -> Path:
@@ -141,41 +148,28 @@ def compact_day(archive_dir: Path, day: str) -> CompactResult:
             output_dir=None,
         )
 
-    con = duckdb.connect()
-
-    try:
-        glob_pattern = str(archive_dir / day / "*.ndjson.gz")
-        _build_raw_lines_table(con, glob_pattern)
-        source_lines = con.execute("SELECT count(*) FROM raw_lines").fetchone()[0]
-
-        # Write into a hidden temp dir *under parquet/*, then atomically rename
-        # it to the final date=<day> name. A crash mid-write can never publish a
-        # half-written partition that a later eligibility pass would mistake for
-        # a completed one. os.replace also refuses to overwrite an existing
-        # non-empty output dir, so a re-run cannot silently clobber prior work.
-        parquet_root = archive_dir / PARQUET_DIR_NAME
-        parquet_root.mkdir(parents=True, exist_ok=True)
-        tmp_output_dir = Path(
-            tempfile.mkdtemp(
-                prefix=f".{PARQUET_DIR_PREFIX}{day}.",
-                dir=parquet_root,
-            )
+    parquet_root = archive_dir / PARQUET_DIR_NAME
+    parquet_root.mkdir(parents=True, exist_ok=True)
+    tmp_output_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f".{PARQUET_DIR_PREFIX}{day}.",
+            dir=parquet_root,
         )
-        try:
-            # A single .parquet per compacted day.
-            copy_sql = (
-                f"COPY (SELECT {_PROMOTED_COLUMNS_SQL} FROM raw_lines) "
-                f"TO {_sql_str(str(tmp_output_dir / 'data.parquet'))} "
-                f"(FORMAT PARQUET, COMPRESSION ZSTD)"
-            )
-            con.execute(copy_sql)
-            os.replace(tmp_output_dir, output_dir)
-        except Exception:
-            shutil.rmtree(tmp_output_dir, ignore_errors=True)
-            raise
+    )
+    try:
+        source_lines = 0
+        for path in source_files:
+            hour = path.name.split(".")[0]  # "HH" from HH.ndjson.gz
+            source_lines += _fold_hour(path, tmp_output_dir / f"{hour}.parquet")
+        os.replace(tmp_output_dir, output_dir)
+    except Exception:
+        shutil.rmtree(tmp_output_dir, ignore_errors=True)
+        raise
 
-        # Read the *published* output back and count its rows; this number should
-        # equal source_lines
+    # Read the *published* output back and count its rows; this number should
+    # equal source_lines
+    con = duckdb.connect()
+    try:
         parquet_rows = con.execute(
             "SELECT count(*) FROM read_parquet("
             + _sql_str(str(output_dir / "*.parquet"))
@@ -219,14 +213,15 @@ def _count_source_lines(archive_dir: Path, day: str) -> int:
     routinely runs days later in a different process, so it must never trust the
     counts the compaction run held in memory.
     """
-    read_sql = _RAW_LINES_READ_SQL.format(
-        source=_sql_str(str(archive_dir / day / "*.ndjson.gz"))
-    )
-    con = duckdb.connect()
-    try:
-        return con.execute(f"SELECT count(*) FROM ({read_sql}) t").fetchone()[0]
-    finally:
-        con.close()
+    total = 0
+    for path in sorted((archive_dir / day).glob("*.ndjson.gz")):
+        read_sql = _RAW_LINES_READ_SQL.format(source=_sql_str(str(path)))
+        con = duckdb.connect()
+        try:
+            total += con.execute(f"SELECT count(*) FROM ({read_sql}) t").fetchone()[0]
+        finally:
+            con.close()
+    return total
 
 
 def _count_parquet_rows(output_dir: Path) -> int:

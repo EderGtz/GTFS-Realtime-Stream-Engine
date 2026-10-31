@@ -157,6 +157,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     signal.signal(signal.SIGTERM, _handle_sigterm)
+    logging.basicConfig(level=logging.INFO)
 
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     config = AppConfig.from_env()
