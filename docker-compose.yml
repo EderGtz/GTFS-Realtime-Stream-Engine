@@ -75,7 +75,9 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_LOG_RETENTION_HOURS: 72
       KAFKA_LOG_DIRS: /var/lib/kafka/data
-      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      # 256 MB segments: with 1 GB segments, retention cleanup could only
+      # delete whole segments days after they aged out
+      KAFKA_LOG_SEGMENT_BYTES: 268435456
       KAFKA_DELETE_TOPIC_ENABLE: "true"
     volumes:
       - kafka_data:/var/lib/kafka/data
