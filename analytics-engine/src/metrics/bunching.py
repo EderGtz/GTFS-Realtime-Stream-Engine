@@ -31,10 +31,14 @@ from math import cos, radians, sqrt
 import numpy as np
 import pandas as pd
 
+from gtfs_static.loader import StopInfo
+
 METERS_PER_DEGREE = 111_320
 POLL_INTERVAL_SECONDS = 15  # matches BASE_INTERVAL_MS in poller.ts
 DISTANCE_THRESHOLD_METERS = 100  # notebook 04, Section C
 MIN_CONSECUTIVE_OBSERVATIONS = 2  # notebook 04, Section C
+TERMINAL_RADIUS_METERS = 250  # staging/layover proximity, see find_close_pairs
+CONSECUTIVE_TOLERANCE_FACTOR = 2  # one skipped poll bucket, see detect_bunching_events
 
 
 @dataclass(frozen=True)
@@ -73,11 +77,32 @@ def _bucket(timestamp: pd.Timestamp) -> pd.Timestamp:
     )
 
 
+def _near_terminal(
+    lat: float,
+    lon: float,
+    terminals: tuple[StopInfo | None, StopInfo | None] | None,
+) -> bool:
+    if not terminals:
+        return False
+    for stop in terminals:
+        if (
+            stop is not None
+            and stop.stop_lat is not None
+            and stop.stop_lon is not None
+            and displacement_meters(lat, lon, stop.stop_lat, stop.stop_lon)
+            <= TERMINAL_RADIUS_METERS
+        ):
+            return True
+    return False
+
+
 def find_close_pairs(
     pings: pd.DataFrame,
     direction_lookup: dict[str, int],
     distance_threshold_m: float = DISTANCE_THRESHOLD_METERS,
-) -> pd.DataFrame:
+    trip_terminals: dict[str, tuple[StopInfo | None, StopInfo | None]] | None = None,
+    return_separated: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame]:
     """
     Return every same-route, same-direction, same-poll-bucket vehicle pair within
     distance_threshold_m of each other, at a single point in time.
@@ -85,11 +110,30 @@ def find_close_pairs(
     `pings` must have vehicle_id, trip_id, route_id, timestamp_eastern, lat, lon.
     `direction_lookup` maps trip_id -> direction_id, sourced from an in-memory
     GTFS-static load (per the README's Phase 3 refresh design).
+
+    When `trip_terminals` is provided (trip_id -> (first stop, last stop) from
+    the GTFS-static load), pairs where BOTH vehicles are within
+    TERMINAL_RADIUS_METERS of their trip's first or last stop are excluded:
+    vehicles staged together at a terminal or layover are not bunched.
+    Pairs whose trip terminal data is unknown are kept -- fail open rather
+    than suppress real events. A near-zero-speed refinement is possible but
+    deliberately not done here; see the hardening plan.
+
+    With return_separated=True, also returns the candidate pairs that were
+    observed far apart in a shared bucket (distance above the threshold).
+    detect_bunching_events needs those to tell "the pair drifted apart" (a
+    real break in an event) from "a poll was simply missing" (jitter).
     """
     df = pings.copy()
     df["direction_id"] = df["trip_id"].map(direction_lookup)
     df = df.dropna(subset=["direction_id", "lat", "lon"])
     df["time_bucket"] = df["timestamp_eastern"].apply(_bucket)
+    df["near_terminal"] = [
+        _near_terminal(
+            lat, lon, trip_terminals.get(str(trip_id)) if trip_terminals else None
+        )
+        for lat, lon, trip_id in zip(df["lat"], df["lon"], df["trip_id"])
+    ]
 
     # A vehicle can produce two real pings that floor into the same bucket due to
     # normal poll jitter. Without this, it can self-pair against itself, producing
@@ -122,25 +166,49 @@ def find_close_pairs(
     dy = (pairs["lat_b"] - pairs["lat_a"]) * METERS_PER_DEGREE
     pairs["distance_meters"] = np.sqrt(dx**2 + dy**2)
 
-    pairs = pairs[pairs["distance_meters"] <= distance_threshold_m]
+    close_pairs = pairs[pairs["distance_meters"] <= distance_threshold_m]
+    far_pairs = pairs[pairs["distance_meters"] > distance_threshold_m]
 
-    pairs = pairs.rename(
-        columns={
-            "vehicle_id_a": "vehicle_a",
-            "vehicle_id_b": "vehicle_b",
-        }
-    )
+    # Both vehicles parked at a terminal/layover => staged, not bunched. One
+    # vehicle at a terminal while another closes in is a real event and stays.
+    close_pairs = close_pairs[
+        ~(close_pairs["near_terminal_a"] & close_pairs["near_terminal_b"])
+    ]
 
-    return pairs
+    rename_map = {"vehicle_id_a": "vehicle_a", "vehicle_id_b": "vehicle_b"}
+    close_pairs = close_pairs.rename(columns=rename_map)
+    if return_separated:
+        return close_pairs, far_pairs.rename(columns=rename_map)
+    return close_pairs
+
+
+def _separated_buckets(
+    separated_pairs: pd.DataFrame | None,
+    group_cols: list[str],
+    key: tuple,
+) -> list[pd.Timestamp]:
+    """Time buckets where this specific pair was observed far apart."""
+    if separated_pairs is None or separated_pairs.empty:
+        return []
+    sep = separated_pairs
+    for col, val in zip(group_cols, key):
+        sep = sep[sep[col] == val]
+    return sorted(sep["time_bucket"])
 
 
 def detect_bunching_events(
     close_pairs: pd.DataFrame,
     min_consecutive: int = MIN_CONSECUTIVE_OBSERVATIONS,
+    separated_pairs: pd.DataFrame | None = None,
 ) -> list[BunchingEvent]:
     """
     Collapse consecutive-bucket close-pair observations into discrete bunching events,
     keeping only runs that meet the persistence requirement (notebook 04, Section B/C).
+
+    Consecutiveness tolerates one skipped poll bucke, but `separated_pairs` rows -- the pair observed
+    far apart in a shared bucket, from find_close_pairs(return_separated=True)
+    -- mark a real break and still split the run. Without that frame the two
+    situations are indistinguishable in close_pairs alone.
     """
     if close_pairs.empty:
         return []
@@ -151,16 +219,38 @@ def detect_bunching_events(
     )
 
     group_cols = ["route_id", "direction_id", "vehicle_a", "vehicle_b"]
-    for _, group in close_pairs.groupby(group_cols):
+    for key, group in close_pairs.groupby(group_cols):
         group = group.reset_index(drop=True)
         time_buckets = pd.DatetimeIndex(group["time_bucket"])
         run_start = 0
+        sep_buckets = _separated_buckets(
+            separated_pairs, group_cols, key if isinstance(key, tuple) else (key,)
+        )
 
         for i in range(1, len(group) + 1):
-            is_consecutive = i < len(group) and (
-                time_buckets[i] - time_buckets[i - 1]
-                == pd.Timedelta(seconds=POLL_INTERVAL_SECONDS)
-            )
+            if i >= len(group):
+                is_consecutive = False
+            else:
+                gap = time_buckets[i] - time_buckets[i - 1]
+                if gap == pd.Timedelta(seconds=POLL_INTERVAL_SECONDS):
+                    is_consecutive = True
+                elif separated_pairs is None:
+                    # No separation information: conservative, any gap is a break
+                    is_consecutive = False
+                else:
+                    # Tolerate one skipped poll bucket between observations:
+                    # gaps are quantized to the 15 s bucket grid, so the
+                    # review's suggested 1.5x would be a silent no-op, while
+                    # real cadence jitter (~16 s median against the nominal
+                    # 15 s) occasionally misses a bucket. An observed
+                    # separation in the gap is a real break and never merges.
+                    tolerated = gap <= pd.Timedelta(
+                        seconds=POLL_INTERVAL_SECONDS * CONSECUTIVE_TOLERANCE_FACTOR
+                    )
+                    broken = any(
+                        time_buckets[i - 1] < b < time_buckets[i] for b in sep_buckets
+                    )
+                    is_consecutive = tolerated and not broken
 
             if not is_consecutive:
                 run = group.iloc[run_start:i]

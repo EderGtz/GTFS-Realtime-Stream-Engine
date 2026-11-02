@@ -59,8 +59,7 @@ logger = get_logger(__name__)
 
 
 def _agency_today(now: datetime | None = None) -> date:
-    """Today's calendar date in the agency's service-day timezone.
-    """
+    """Today's calendar date in the agency's service-day timezone."""
     ts = now if now is not None else datetime.now(tz=UTC)
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=UTC)
@@ -98,6 +97,9 @@ class GtfsStaticData:
         self.stops_lookup: dict[str, StopInfo] = {}
         self.routes_lookup: dict[str, str | None] = {}
         self.trip_route_lookup: dict[str, str] = {}
+        self.trip_terminal_lookup: dict[
+            str, tuple[StopInfo | None, StopInfo | None]
+        ] = {}
 
         self._current_version: str | None = None
         self._current_service_date: date | None = None
@@ -167,6 +169,9 @@ class GtfsStaticData:
         direction_lookup = self._build_direction_lookup(trips_df)
         stop_times_lookup = self._build_stop_times_lookup(stop_times_df)
         stops_lookup = self._build_stops_lookup(stops_df)
+        trip_terminal_lookup = self._build_trip_terminal_lookup(
+            stop_times_df, stops_lookup
+        )
         routes_lookup = self._build_routes_lookup(routes_df)
         trip_route_lookup = self._build_trip_route_lookup(trips_df)
         version = self._compute_version()
@@ -174,6 +179,7 @@ class GtfsStaticData:
         self.direction_lookup = direction_lookup
         self.stop_times_lookup = stop_times_lookup
         self.stops_lookup = stops_lookup
+        self.trip_terminal_lookup = trip_terminal_lookup
         self.routes_lookup = routes_lookup
         self.trip_route_lookup = trip_route_lookup
         self._current_version = version
@@ -425,6 +431,39 @@ class GtfsStaticData:
             route_id = str(row.route_id)
             name = str(row.route_long_name) if pd.notna(row.route_long_name) else None
             lookup[route_id] = name
+        return lookup
+
+    @staticmethod
+    def _build_trip_terminal_lookup(
+        stop_times_df: pd.DataFrame,
+        stops_lookup: dict[str, StopInfo],
+    ) -> dict[str, tuple[StopInfo | None, StopInfo | None]]:
+        """trip_id -> (first stop, last stop) for terminal-staging exclusion in
+        bunching detection (A1): vehicles parked together at a trip's terminal
+        or layover are not bunched. Separate pass over stop_times_df keeps the
+        main lookup builders unchanged."""
+        first: dict[str, tuple[int, str | None]] = {}
+        last: dict[str, tuple[int, str | None]] = {}
+        has_stop_id = "stop_id" in stop_times_df.columns
+
+        for row in stop_times_df.itertuples():
+            trip_id = str(row.trip_id)
+            seq = int(row.stop_sequence)
+            stop_id = (
+                str(row.stop_id) if has_stop_id and pd.notna(row.stop_id) else None
+            )
+            if trip_id not in first or seq < first[trip_id][0]:
+                first[trip_id] = (seq, stop_id)
+            if trip_id not in last or seq > last[trip_id][0]:
+                last[trip_id] = (seq, stop_id)
+
+        lookup: dict[str, tuple[StopInfo | None, StopInfo | None]] = {}
+        for trip_id, (_, first_stop_id) in first.items():
+            last_stop_id = last[trip_id][1]
+            lookup[trip_id] = (
+                stops_lookup.get(first_stop_id) if first_stop_id else None,
+                stops_lookup.get(last_stop_id) if last_stop_id else None,
+            )
         return lookup
 
     @staticmethod

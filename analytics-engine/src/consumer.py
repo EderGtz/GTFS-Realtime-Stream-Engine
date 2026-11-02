@@ -472,8 +472,15 @@ class AnalyticsConsumer:
         close_pairs = pd.DataFrame()
 
         try:
-            close_pairs = find_close_pairs(pings, self.static_data.direction_lookup)
-            bunching_events = detect_bunching_events(close_pairs)
+            close_pairs, separated_pairs = find_close_pairs(
+                pings,
+                self.static_data.direction_lookup,
+                trip_terminals=self.static_data.trip_terminal_lookup,
+                return_separated=True,
+            )
+            bunching_events = detect_bunching_events(
+                close_pairs, separated_pairs=separated_pairs
+            )
 
             bunching_actions = self.bunching_tracker.reconcile(
                 bunching_events,
