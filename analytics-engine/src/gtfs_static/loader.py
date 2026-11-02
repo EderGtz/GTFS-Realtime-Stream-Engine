@@ -24,12 +24,17 @@ Known GTFS quirks already discovered elsewhere in this project, handled here too
 
 import hashlib
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from metrics.schedule_deviation import ScheduledStopTime, gtfs_time_to_seconds
+from metrics.schedule_deviation import (
+    AGENCY_TZ,
+    ScheduledStopTime,
+    gtfs_time_to_seconds,
+)
 from utils.logger import get_logger
 
 _REQUIRED_FILES = ("stops.txt", "trips.txt", "stop_times.txt", "routes.txt")
@@ -51,6 +56,15 @@ _REQUIRED_COLUMNS = {
 }
 
 logger = get_logger(__name__)
+
+
+def _agency_today(now: datetime | None = None) -> date:
+    """Today's calendar date in the agency's service-day timezone.
+    """
+    ts = now if now is not None else datetime.now(tz=UTC)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return ts.astimezone(ZoneInfo(AGENCY_TZ)).date()
 
 
 @dataclass(frozen=True)
@@ -86,6 +100,7 @@ class GtfsStaticData:
         self.trip_route_lookup: dict[str, str] = {}
 
         self._current_version: str | None = None
+        self._current_service_date: date | None = None
 
     def load(self) -> None:
         """
@@ -120,11 +135,13 @@ class GtfsStaticData:
         self._validate_columns("stops.txt", stops_df)
         self._validate_columns("routes.txt", routes_df)
 
+        service_date = _agency_today()
+
         # Filter to active service days before building lookups.
         # Only trips whose service_id is active today (± 1 day) can ever match live pings.
         # Skipped when trips.txt has no service_id column or no calendar data.
         if "service_id" in trips_df.columns:
-            active_service_ids = self._build_active_service_ids()
+            active_service_ids = self._build_active_service_ids(service_date)
             if active_service_ids is not None:
                 original_trips = len(trips_df)
                 trips_df = trips_df[
@@ -160,6 +177,7 @@ class GtfsStaticData:
         self.routes_lookup = routes_lookup
         self.trip_route_lookup = trip_route_lookup
         self._current_version = version
+        self._current_service_date = service_date
 
     def has_changed(self) -> bool:
         """
@@ -176,9 +194,13 @@ class GtfsStaticData:
         return self._compute_version() != self._current_version
 
     def reload_if_changed(self) -> bool:
-        """Convenience wrapper: reload only if has_changed() is True. Returns
-        whether a reload actually happened."""
-        if self.has_changed():
+        """Convenience wrapper: reload when the on-disk bundle changed OR when
+        the agency-local service date advanced past the date the active-service
+        filter was built for. The filter window is date-dependent (today ± 1
+        day), so without the date check a bundle that stops republishing
+        silently loses every service whose window expires
+        Returns whether a reload actually happened."""
+        if self.has_changed() or self._service_date_stale():
             try:
                 self.load()
                 return True
@@ -193,15 +215,24 @@ class GtfsStaticData:
                 return False
         return False
 
+    def _service_date_stale(self) -> bool:
+        return (
+            self._current_service_date is not None
+            and self._current_service_date != _agency_today()
+        )
+
     # --- internals ---
 
-    def _build_active_service_ids(self) -> set[str] | None:
-        """Compute the set of service_ids active today ± 1 day.
+    def _build_active_service_ids(self, today: date | None = None) -> set[str] | None:
+        """Compute the set of service_ids active on `today` ± 1 day
+        (defaults to the current agency-local date).
 
         Reads calendar.txt (day-of-week patterns with date ranges) and
         calendar_dates.txt (exception dates that add/remove service).
-        Returns None if neither file exists (no filtering — keep all trips).
-        Returns a set of service_id strings otherwise.
+        Returns None if neither file exists (no filtering — keep all trips), or
+        when the window yields no active service at all: an empty result here
+        more likely means a calendar quirk than a real service shutdown, and
+        failing open keeps the pipeline alive. Returns a set otherwise.
 
         The ±1 day margin handles midnight-crossing trips: the consumer may
         process a ping shortly after a service-day rollover, and the
@@ -214,7 +245,8 @@ class GtfsStaticData:
         if not calendar_path.exists() and not calendar_dates_path.exists():
             return None  # keep everything
 
-        today = datetime.now(tz=UTC).date()
+        if today is None:
+            today = _agency_today()
         target_dates = [today - timedelta(days=1), today, today + timedelta(days=1)]
         active: set[str] = set()
 
