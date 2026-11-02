@@ -93,7 +93,7 @@ Before writing any production logic, this phase starts with exploration: pulling
 The MVP settles on two:
 
 - **Schedule deviation** — comparing a vehicle's actual position/timestamp against its scheduled stop time to compute how late (or early) it's running.
-- **Bunching detection** — checking spatial proximity between consecutive vehicles on the same route; if two buses that should be evenly spaced are instead close together, that's a real, well-known transit operations problem, and a more interesting signal than delay alone.
+- **Bunching detection** — checking spatial proximity between vehicles on the same route and direction. Every same-route pair within the threshold is evaluated, not only consecutively-positioned vehicles. If two buses that should be evenly spaced are instead close together, that's a real, well-known transit operations problem, and a more interesting signal than delay alone.
 
 Note: **The distance and time-window thresholds that define "too close together" are decided here, from real inspected MBTA spacing/headway patterns — not guessed in advance.** For example: two vehicles on the same route/direction within X meters, where the actual headway ratio is below Y times the scheduled headway. Real X/Y values get set once the exploration step above has actually happened.
 
@@ -187,7 +187,7 @@ These improvements are done before deployment (Phase 6) so the system ships with
 *Leaflet map showing deviation markers (colored by severity) and bunching events (purple markers) on a map of Boston.*
 
 ![Bunching Cascade / Platooning](img/phase5_three_buses_bunching.png)
-*A real "platooning" edge case captured live in Boston. Three consecutive buses on the same route triggered the bunching threshold. The engine correctly emits two independent bunching events (A+B and B+C) rather than connecting A directly to C — it joins against the GTFS-static schedule and evaluates proximity only between consecutive vehicles.*
+*A real "platooning" edge case captured live in Boston. Three buses on the same route triggered the bunching threshold. The engine correctly emits two independent bunching events (A+B and B+C) rather than one A-to-C event — proximity is evaluated between every same-route, same-direction pair within the threshold, and the A+C pair simply exceeds the distance threshold. Pairs where both vehicles sit near a route terminal are excluded as staged layover, not bunched.*
 
 ---
 
