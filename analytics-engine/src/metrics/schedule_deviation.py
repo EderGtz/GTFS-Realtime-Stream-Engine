@@ -103,21 +103,36 @@ def resolve_scheduled_datetime(
 ) -> pd.Timestamp:
     """
     Anchor a pre-parsed GTFS time (integer seconds-of-day) to a real datetime by
-    choosing whichever of the previous, same, or next Eastern calendar day lands
-    closest to the actual observed time.
+    choosing whichever of the previous, same, or next service day lands closest
+    to the actual observed time.
+
+    The anchor is "noon minus 12 hours" of the service day, exactly as the GTFS
+    spec defines schedule times -- NOT plain wall-clock midnight. On a DST
+    transition day (e.g. America/New_York on 2026-11-01, a 25-hour day) the old
+    "midnight + timedelta" arithmetic resolved every scheduled time one hour
+    early (tz-aware Timestamp + timedelta adds absolute time, not wall time),
+    and the consumer's ±30-minute gate then silently rejected the results -- the
+    whole service day produced near-zero output. Anchoring at noon (never
+    ambiguous) minus 12 absolute hours is correct on every day and is identical
+    to the old arithmetic on normal 24-hour days.
 
     Known limitation (notebook 03, Section C): assumes the vehicle isn't off-schedule by
     more than roughly half a day. Fine for MVP; would need a smarter anchor (e.g. against
     the trip's own scheduled start time) if extreme deviations ever become common.
     """
     offset = timedelta(seconds=scheduled_seconds)
-    midnight = actual_eastern.normalize()
+    service_date = actual_eastern.date()
 
-    candidates = [
-        midnight + offset,
-        (midnight - pd.Timedelta(days=1)) + offset,
-        (midnight + pd.Timedelta(days=1)) + offset,
-    ]
+    candidates = []
+    for day_delta in (-1, 0, 1):
+        day = service_date + timedelta(days=day_delta)
+        # Noon is unambiguous in every timezone on every day, which is why the
+        # GTFS spec anchors here instead of at midnight.
+        noon = pd.Timestamp(
+            year=day.year, month=day.month, day=day.day, hour=12
+        ).tz_localize(AGENCY_TZ)
+        anchor = noon - pd.Timedelta(hours=12)
+        candidates.append(anchor + offset)
     return min(candidates, key=lambda c: abs((c - actual_eastern).total_seconds()))
 
 

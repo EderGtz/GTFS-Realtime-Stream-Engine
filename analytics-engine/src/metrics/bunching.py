@@ -64,7 +64,13 @@ def displacement_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> f
 
 
 def _bucket(timestamp: pd.Timestamp) -> pd.Timestamp:
-    return timestamp.floor(f"{POLL_INTERVAL_SECONDS}s")
+    if timestamp.tzinfo is None:
+        return timestamp.floor(f"{POLL_INTERVAL_SECONDS}s")
+    return (
+        timestamp.tz_convert("UTC")
+        .floor(f"{POLL_INTERVAL_SECONDS}s")
+        .tz_convert(timestamp.tzinfo)
+    )
 
 
 def find_close_pairs(
