@@ -266,6 +266,24 @@ class MetricsWriter:
             name="bunch_time",
         )
 
+        # TTL on the live tier. The API only reads ~3-minute windows (status,
+        # route performance) and history lives in Postgres + the Parquet
+        # archive, yet these collections grew unbounded — 9.2M docs / 1.4 GB
+        # by 2026-11-01, and the index bulk was why Mongo's RAM crept past its
+        # baseline. 14 days keeps re-derivation headroom while capping growth
+        # for good. FUTURE FIX: make retention per-agency config once
+        # multi-agency lands.
+        self.deviation_collection.create_index(
+            [("actual_at", ASCENDING)],
+            name="dev_ttl",
+            expireAfterSeconds=14 * 24 * 3600,
+        )
+        self.bunching_collection.create_index(
+            [("end_time", ASCENDING)],
+            name="bunch_ttl",
+            expireAfterSeconds=14 * 24 * 3600,
+        )
+
     def write_bunching_actions(self, actions: list[tuple[str, BunchingEvent]]) -> int:
 
         if not actions:
