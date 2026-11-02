@@ -800,3 +800,26 @@ class TestServiceDateLifecycle:
         assert _agency_today(datetime(2026, 11, 2, 5, 0, tzinfo=UTC)) == date(
             2026, 11, 2
         )
+
+
+class TestTripTerminalLookup:
+    """Terminal-staging exclusion support (A1): each trip maps to its first
+    and last stop so bunching can exclude vehicles staged at a terminal."""
+
+    def test_maps_each_trip_to_its_first_and_last_stop(self, gtfs_dir):
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+        # gtfs_dir fixture: trip 12345678 runs 70001 (seq 1) -> 70002 (seq 2).
+        first, last = data.trip_terminal_lookup["12345678"]
+        assert first is not None and last is not None
+        assert first.stop_id == "70001"
+        assert last.stop_id == "70002"
+
+    def test_single_stop_trip_maps_to_the_same_stop(self, gtfs_dir):
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+        # gtfs_dir fixture: ADDED trip has one stop_time only.
+        first, last = data.trip_terminal_lookup["ADDED-1584904727"]
+        assert first is not None and last is not None
+        assert first.stop_id == "70001"
+        assert last.stop_id == "70001"

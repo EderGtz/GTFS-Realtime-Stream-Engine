@@ -8,6 +8,7 @@ synthetic inputs with known expected outputs -- not live data.
 import pandas as pd
 import pytest
 
+from gtfs_static.loader import StopInfo
 from metrics.bunching import (
     _bucket,
     detect_bunching_events,
@@ -433,3 +434,168 @@ class TestDSTAmbiguousHour:
         )
         close_pairs = find_close_pairs(pings, {"t1": 0})
         assert len(close_pairs) == 1
+
+
+class TestTerminalStagingExclusion:
+    """A1: vehicles parked together at a route terminal or layover are staged,
+    not bunched. Pairs where BOTH vehicles are within TERMINAL_RADIUS_METERS
+    of their trip's first or last stop are excluded; everything else stays."""
+
+    def _terminals(self) -> dict[str, tuple[StopInfo | None, StopInfo | None]]:
+        terminal = StopInfo(
+            stop_id="term", stop_name=None, stop_lat=42.0, stop_lon=-71.0
+        )
+        return {"t1": (terminal, terminal), "t2": (terminal, terminal)}
+
+    def _pings(self, lat_a: float, lat_b: float) -> pd.DataFrame:
+        t = eastern_ts("2026-11-03 08:00:00")
+        return pd.DataFrame(
+            [
+                {
+                    "vehicle_id": "v1",
+                    "trip_id": "t1",
+                    "route_id": "R1",
+                    "lat": lat_a,
+                    "lon": -71.0,
+                    "timestamp_eastern": t,
+                },
+                {
+                    "vehicle_id": "v2",
+                    "trip_id": "t2",
+                    "route_id": "R1",
+                    "lat": lat_b,
+                    "lon": -71.0,
+                    "timestamp_eastern": t,
+                },
+            ]
+        )
+
+    def test_pair_staged_at_terminal_is_not_flagged(self):
+        # ~111 m and ~167 m from the terminal, ~56 m apart: a staged pair.
+        pings = self._pings(42.001, 42.0015)
+        pairs = find_close_pairs(
+            pings, {"t1": 0, "t2": 0}, trip_terminals=self._terminals()
+        )
+        assert len(pairs) == 0
+
+    def test_pair_close_mid_route_is_still_flagged(self):
+        # Same ~56 m separation but 55 km away from the terminal.
+        pings = self._pings(42.5, 42.5005)
+        pairs = find_close_pairs(
+            pings, {"t1": 0, "t2": 0}, trip_terminals=self._terminals()
+        )
+        assert len(pairs) == 1
+
+    def test_pair_with_only_one_vehicle_at_terminal_is_flagged(self):
+        # a is 200 m from the terminal (inside the radius), b is 290 m
+        # (outside); they are 90 m apart, so the pair forms and must survive.
+        pings = self._pings(42.0 + 200 / 111_320, 42.0 + 290 / 111_320)
+        pairs = find_close_pairs(
+            pings, {"t1": 0, "t2": 0}, trip_terminals=self._terminals()
+        )
+        assert len(pairs) == 1
+
+    def test_unknown_trip_terminals_fail_open(self):
+        pings = self._pings(42.001, 42.0015)
+        pairs = find_close_pairs(
+            pings, {"t1": 0, "t2": 0}, trip_terminals={"t9": (None, None)}
+        )
+        assert len(pairs) == 1
+
+
+class TestConsecutiveTolerance:
+    """M2: a single skipped poll bucket (30 s on the 15 s bucket grid -- the
+    documented ~16 s jitter failure mode) must not split one continuous
+    event."""
+
+    @staticmethod
+    def _pairs(buckets: list[int]) -> pd.DataFrame:
+        t0 = eastern_ts("2026-11-03 08:00:00")
+        return pd.DataFrame(
+            [
+                {
+                    "route_id": "R1",
+                    "direction_id": 0,
+                    "vehicle_a": "v1",
+                    "vehicle_b": "v2",
+                    "time_bucket": t0 + pd.Timedelta(seconds=b),
+                    "distance_meters": 50.0,
+                }
+                for b in buckets
+            ]
+        )
+
+    def test_one_skipped_bucket_does_not_split_the_event(self):
+        # The empty (not None) separation frame asserts "checked, none
+        # observed" -- which is what unlocks the jitter tolerance.
+        no_separations = pd.DataFrame(
+            columns=[
+                "route_id",
+                "direction_id",
+                "vehicle_a",
+                "vehicle_b",
+                "time_bucket",
+            ]
+        )
+        events = detect_bunching_events(
+            self._pairs([0, 15, 45, 60]),
+            min_consecutive=2,
+            separated_pairs=no_separations,
+        )
+        assert len(events) == 1
+        assert events[0].observation_count == 4
+
+    def test_two_skipped_buckets_split_the_event(self):
+        events = detect_bunching_events(self._pairs([0, 15, 75, 90]), min_consecutive=2)
+        assert len(events) == 2
+
+    def test_observed_separation_still_splits_the_event(self):
+        # close at 0,15; observed FAR apart at 30; close again at 45,60.
+        # The gap is inside the tolerance but the separation is real.
+        t0 = eastern_ts("2026-11-03 08:00:00")
+        separated = pd.DataFrame(
+            [
+                {
+                    "route_id": "R1",
+                    "direction_id": 0,
+                    "vehicle_a": "v1",
+                    "vehicle_b": "v2",
+                    "time_bucket": t0 + pd.Timedelta(seconds=30),
+                }
+            ]
+        )
+        events = detect_bunching_events(
+            self._pairs([0, 15, 45, 60]),
+            min_consecutive=2,
+            separated_pairs=separated,
+        )
+        assert len(events) == 2
+
+    def test_return_separated_reports_far_pairs(self):
+        # The same-bucket pair at 1 km exceeds the threshold: it must appear
+        # only in the separated frame, which is what tells detect_bunching_events
+        # apart from a merely missing poll.
+        t = eastern_ts("2026-11-03 08:00:00")
+        pings = pd.DataFrame(
+            [
+                {
+                    "vehicle_id": "v1",
+                    "trip_id": "t1",
+                    "route_id": "R1",
+                    "lat": 42.5,
+                    "lon": -71.0,
+                    "timestamp_eastern": t,
+                },
+                {
+                    "vehicle_id": "v2",
+                    "trip_id": "t1",
+                    "route_id": "R1",
+                    "lat": 42.51,
+                    "lon": -71.0,
+                    "timestamp_eastern": t,
+                },
+            ]
+        )
+        close, far = find_close_pairs(pings, {"t1": 0}, return_separated=True)
+        assert len(close) == 0
+        assert len(far) == 1

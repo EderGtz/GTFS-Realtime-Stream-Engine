@@ -346,6 +346,7 @@ class TestAnalyticsConsumer:
         consumer = AnalyticsConsumer(
             kafka_config={"group.id": "test"}, topic="test", on_window_result=sink
         )
+        mock_pairs.return_value = (pd.DataFrame(), pd.DataFrame())
 
         df = pd.DataFrame(
             [
@@ -395,7 +396,7 @@ class TestAnalyticsConsumer:
             observation_count=4,
             min_distance_meters=15.0,
         )
-        mock_pairs.return_value = pd.DataFrame()
+        mock_pairs.return_value = (pd.DataFrame(), pd.DataFrame())
         mock_detect.return_value = [fake_event]
         mock_arr.return_value = []
 
