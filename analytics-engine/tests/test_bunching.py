@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from metrics.bunching import (
+    _bucket,
     detect_bunching_events,
     displacement_meters,
     find_close_pairs,
@@ -387,3 +388,48 @@ class TestDetectBunchingEvents:
         events = detect_bunching_events(close_pairs, min_consecutive=2)
         assert len(events) == 2
         assert all(e.observation_count == 2 for e in events)
+
+
+class TestDSTAmbiguousHour:
+    """Bunching must survive pings in the repeated fall-back hour. pandas
+    Timestamp.floor rounds the wall clock and re-localizes it, raising
+    "Cannot infer dst time from 2026-11-01 01:00:00" -- which aborted the
+    bunching computation for every window containing such a ping (observed in
+    production on 2026-11-01, hardening review)."""
+
+    def test_bucket_does_not_raise_in_repeated_hour(self):
+        first_pass = pd.Timestamp("2026-11-01 05:30", tz="UTC").tz_convert(
+            EASTERN
+        )  # 01:30 EDT
+        second_pass = pd.Timestamp("2026-11-01 06:30", tz="UTC").tz_convert(
+            EASTERN
+        )  # 01:30 EST
+        # The two passes of the repeated hour must land in distinct buckets.
+        assert _bucket(first_pass) != _bucket(second_pass)
+
+    def test_find_close_pairs_handles_repeated_hour_pings(self):
+        first_pass = pd.Timestamp("2026-11-01 05:30", tz="UTC").tz_convert(
+            EASTERN
+        )  # 01:30 EDT
+        pings = pd.DataFrame(
+            [
+                {
+                    "vehicle_id": "v1",
+                    "trip_id": "t1",
+                    "route_id": "R1",
+                    "lat": 42.0,
+                    "lon": -71.0,
+                    "timestamp_eastern": first_pass,
+                },
+                {
+                    "vehicle_id": "v2",
+                    "trip_id": "t1",
+                    "route_id": "R1",
+                    "lat": 42.0,
+                    "lon": -71.0,
+                    "timestamp_eastern": first_pass,
+                },
+            ]
+        )
+        close_pairs = find_close_pairs(pings, {"t1": 0})
+        assert len(close_pairs) == 1

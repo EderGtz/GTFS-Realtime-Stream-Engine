@@ -7,12 +7,12 @@ project's existing testing convention.
 """
 
 import time
-from datetime import UTC
+from datetime import UTC, date, datetime
 
 import pandas as pd
 import pytest
 
-from gtfs_static.loader import GtfsStaticData, StopInfo
+from gtfs_static.loader import GtfsStaticData, StopInfo, _agency_today
 
 
 @pytest.fixture
@@ -676,3 +676,127 @@ class TestSchemaValidation:
             match=r"Missing required column\(s\) in stops\.txt:.*stop_id",
         ):
             data.load()
+
+
+class TestServiceDateLifecycle:
+    """The active-service filter window is date-dependent (today ± 1 day): it
+    must advance with the agency-local service date even when the bundle on
+    disk never changes. Freezing it at the last load() cost most of a service
+    day's metrics in production (C1, hardening review)."""
+
+    def _write_bundle(self, path):
+        pd.DataFrame(
+            [
+                {
+                    "trip_id": "daily-trip",
+                    "route_id": "Red",
+                    "direction_id": 0,
+                    "service_id": "DAILY",
+                },
+                {
+                    "trip_id": "midweek-trip",
+                    "route_id": "Red",
+                    "direction_id": 0,
+                    "service_id": "MIDWEEK",
+                },
+            ]
+        ).to_csv(path / "trips.txt", index=False)
+        pd.DataFrame(
+            [
+                {
+                    "trip_id": "daily-trip",
+                    "stop_sequence": 1,
+                    "arrival_time": "08:00:00",
+                    "departure_time": "08:00:00",
+                    "stop_id": "70001",
+                },
+                {
+                    "trip_id": "midweek-trip",
+                    "stop_sequence": 1,
+                    "arrival_time": "08:00:00",
+                    "departure_time": "08:00:00",
+                    "stop_id": "70001",
+                },
+            ]
+        ).to_csv(path / "stop_times.txt", index=False)
+        pd.DataFrame(
+            [
+                {
+                    "stop_id": "70001",
+                    "stop_name": "Alewife",
+                    "stop_lat": 42.3954,
+                    "stop_lon": -71.1425,
+                }
+            ]
+        ).to_csv(path / "stops.txt", index=False)
+        pd.DataFrame([{"route_id": "Red", "route_long_name": "Red Line"}]).to_csv(
+            path / "routes.txt", index=False
+        )
+        pd.DataFrame(
+            [
+                {
+                    "service_id": "DAILY",
+                    "monday": 1,
+                    "tuesday": 1,
+                    "wednesday": 1,
+                    "thursday": 1,
+                    "friday": 1,
+                    "saturday": 1,
+                    "sunday": 1,
+                    "start_date": "20261101",
+                    "end_date": "20261130",
+                },
+                {
+                    "service_id": "MIDWEEK",
+                    "monday": 0,
+                    "tuesday": 0,
+                    "wednesday": 1,
+                    "thursday": 1,
+                    "friday": 0,
+                    "saturday": 0,
+                    "sunday": 0,
+                    "start_date": "20261101",
+                    "end_date": "20261130",
+                },
+            ]
+        ).to_csv(path / "calendar.txt", index=False)
+
+    def test_service_date_advance_forces_reload_without_bundle_change(
+        self, tmp_path, monkeypatch
+    ):
+        self._write_bundle(tmp_path)
+        current = {"date": date(2026, 11, 2)}  # a Monday
+        monkeypatch.setattr(
+            "gtfs_static.loader._agency_today", lambda now=None: current["date"]
+        )
+
+        data = GtfsStaticData(tmp_path)
+        data.load()
+        assert ("daily-trip", 1) in data.stop_times_lookup
+        assert ("midweek-trip", 1) not in data.stop_times_lookup
+
+        # Wednesday, same bundle on disk: the window anchored on Monday no
+        # longer covers today's services and must be rebuilt anyway.
+        current["date"] = date(2026, 11, 4)
+        assert data.reload_if_changed() is True
+        assert ("midweek-trip", 1) in data.stop_times_lookup
+
+    def test_no_reload_on_same_service_date_and_unchanged_bundle(
+        self, tmp_path, monkeypatch
+    ):
+        self._write_bundle(tmp_path)
+        monkeypatch.setattr(
+            "gtfs_static.loader._agency_today", lambda now=None: date(2026, 11, 2)
+        )
+        data = GtfsStaticData(tmp_path)
+        data.load()
+        assert data.reload_if_changed() is False
+
+    def test_agency_today_uses_the_service_timezone_not_utc(self):
+        # 2026-11-02 03:00 UTC is still 2026-11-01 23:00 in America/New_York.
+        assert _agency_today(datetime(2026, 11, 2, 3, 0, tzinfo=UTC)) == date(
+            2026, 11, 1
+        )
+        assert _agency_today(datetime(2026, 11, 2, 5, 0, tzinfo=UTC)) == date(
+            2026, 11, 2
+        )

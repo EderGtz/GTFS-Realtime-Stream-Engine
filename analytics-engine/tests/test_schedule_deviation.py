@@ -82,6 +82,49 @@ class TestResolveScheduledDatetime:
         assert resolved == eastern_ts("2026-08-19 00:05:00")
 
 
+class TestResolveScheduledDatetimeDst:
+    """DST regression tests. Scheduled times are anchored at "noon minus 12h"
+    of the service day (the GTFS spec definition). The old wall-midnight
+    arithmetic resolved the whole 2026-11-01 service day one hour early
+    (tz-aware Timestamp + timedelta adds absolute time, not wall time), and the
+    consumer's ±30-minute gate silently rejected the results -- the day
+    produced near-zero metrics in production (hardening review)."""
+
+    def test_fall_back_day_resolves_wall_time_correctly(self):
+        # 15:05 UTC = 10:05 EST on the 25-hour day.
+        actual = pd.Timestamp("2026-11-01 15:05", tz="UTC").tz_convert(EASTERN)
+        resolved = resolve_scheduled_datetime(actual, 10 * 3600)
+        assert resolved == pd.Timestamp("2026-11-01 15:00", tz="UTC")  # 10:00 EST
+
+    def test_fall_back_day_past_midnight_time(self):
+        # 25:30:00 on the 2026-11-01 service day = 01:30 EST on Nov 2.
+        actual = pd.Timestamp("2026-11-02 06:35", tz="UTC").tz_convert(EASTERN)
+        resolved = resolve_scheduled_datetime(actual, 25 * 3600 + 30 * 60)
+        assert resolved == pd.Timestamp("2026-11-02 06:30", tz="UTC")
+
+    def test_repeated_hour_maps_to_both_passes(self):
+        # Per the spec's absolute arithmetic, the repeated wall hour is reached
+        # by schedule 00:30:00 (first/EDT pass) and 01:30:00 (second/EST pass)
+        # -- both anchored steadily from noon minus 12h, never re-localized.
+        first = pd.Timestamp("2026-11-01 05:35", tz="UTC").tz_convert(
+            EASTERN
+        )  # 01:35 EDT
+        second = pd.Timestamp("2026-11-01 06:35", tz="UTC").tz_convert(
+            EASTERN
+        )  # 01:35 EST
+        assert resolve_scheduled_datetime(first, 30 * 60) == pd.Timestamp(
+            "2026-11-01 05:30", tz="UTC"
+        )
+        assert resolve_scheduled_datetime(second, 90 * 60) == pd.Timestamp(
+            "2026-11-01 06:30", tz="UTC"
+        )
+
+    def test_normal_day_behavior_unchanged(self):
+        actual = eastern_ts("2026-11-03 08:20:00")
+        resolved = resolve_scheduled_datetime(actual, 8 * 3600 + 15 * 60)
+        assert resolved == eastern_ts("2026-11-03 08:15:00")
+
+
 class TestToEastern:
     def test_converts_naive_utc_to_eastern(self):
         result = to_eastern("2026-08-18T17:19:15.000Z")
