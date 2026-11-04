@@ -127,7 +127,7 @@ The response contains three top-level fields: `delays` (schedule deviation entri
 
 Kept deliberately minimal so the full pipeline — ingest → stream → analyze → serve — is proven working end-to-end before expanding the API surface.
 
-**Security posture:** read-only public endpoint serving public transit data. Applied measures: Helmet security headers, CORS, rate limiting (100 req/15min per IP via `express-rate-limit`), error sanitization (generic messages in production, full details in dev/test), request logging via pino.
+**Security posture:** read-only public endpoint serving public transit data. Applied measures: Helmet security headers, CORS, rate limiting (600 req/15min per IP via `express-rate-limit` — origin protection; ceiling sized for CGNAT-shared mobile IPs behind normal map polling), error sanitization (generic messages in production, full details in dev/test), request logging via pino.
 
 **API as separate entry point:** the API server (`src/api/index.ts`) and the Kafka poller (`src/index.ts`) are different processes with different failure modes. The API is started via `npm run start:api`, the poller via `npm run dev`. They share the same MongoDB database but have independent lifecycles.
 
@@ -135,9 +135,10 @@ Kept deliberately minimal so the full pipeline — ingest → stream → analyze
 - **MongoDB read connection:** `src/db/connection.ts` opens a dedicated connection with retry (same pattern as the analytics engine's `_connect_with_retry`), exposing `bunching_events` and `schedule_deviations` collections.
 - **Router factory pattern:** `createStatusRouter(collections)` receives MongoDB collections via dependency injection, keeping the route handler testable without a real database.
 - **Response mapping:** MongoDB documents are projected into typed response interfaces (`DelayEntry`, `BunchingEntry`, `LiveResponse`). Deviation documents that lack `route_id`/`direction_id` (not stored by the analytics engine) map those fields to `null` for a consistent response shape.
+- **Demo robustness:** responses are gzip-compressed (`compression` middleware), and `/v1/status/live` sends `Cache-Control: public, max-age=15` (the body is identical for every client, so browsers — and any future edge cache — may hold it briefly). `trust proxy` is set to the exact hop count (0 today; bump to 1 when TLS lands behind a reverse proxy).
 
 **Testing:**
-- **Unit tests** (`tests/api/health.test.ts`, `tests/api/status.test.ts`): 10 tests covering health check, response shape with seeded mock data, empty database returns empty arrays, location null handling, ISO 8601 dates, error handling (500 on DB failure), and no-collections mode (404 when API starts without MongoDB).
+- **Unit tests** (`tests/api/`): health check, response shape with seeded mock data, empty database returns empty arrays, location null handling, ISO 8601 dates, error handling (500 on DB failure), no-collections mode (404 when API starts without MongoDB), cache headers on `/v1/status/live`, gzip compression, and rate-limiter ceiling behavior (sustained burst passes, hammering 429s).
 - **Integration test** (`tests/integration/api.test.ts`): 6 tests using testcontainers — spins up a real MongoDB, seeds known documents, hits the endpoint via supertest, asserts response shape and data fidelity. Also tests the empty-database case and rate limiting (429 after threshold).
 - **CI:** API unit tests run in the existing `unit-tests.yml` workflow (picked up by `vitest run --exclude tests/integration`). API integration tests run in `integration-tests.yml` alongside Kafka integration tests.
 
