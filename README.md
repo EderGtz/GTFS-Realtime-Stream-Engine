@@ -173,6 +173,7 @@ These are deliberate, documented tradeoffs. Detailed explanations are in [`docs/
 - **Overlap boundary assumption.** `OVERLAP_SECONDS >= MIN_CONSECUTIVE_OBSERVATIONS * POLL_INTERVAL_SECONDS` — satisfied exactly, with no margin.
 - **Poll-interval bucket jitter can split continuous bunching events.** Real MBTA cadence has ~16s median jitter against the nominal 15s interval.
 - **Departure deviations are disabled.** The last-STOPPED_AT heuristic was never validated against real data. Disabled pending empirical validation.
+- **GTFS-static reload runs inside the consume loop.** A reload (forced daily to refresh the active-service window, and whenever MBTA republishes) pauses consumption for ~6 s and holds old and new lookups at once — measured peak RSS ~1.15 GB against ~0.7 GB for a single load, which is why the analytics container's `mem_limit` is 2g. Columnar lookups and a background-thread swap are documented future work.
 - **No cross-document atomicity.** Bunching and deviation writes are separate `bulk_write` calls. Idempotent upserts ensure retry convergence.
 - **Archive can contain duplicate lines after a crash.** The archive consumer commits Kafka offsets only after fsync; a crash in between redelivers the batch. At-least-once, same philosophy as above ([`docs/archive-consumer.md`](docs/archive-consumer.md)).
 - **Archive files are partitioned by write time, not event time.** Files are organized by when the message was archived (UTC), not when the vehicle moved. The PostgreSQL hourly stats bucket by arrival hour for the same reason.

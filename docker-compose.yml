@@ -136,7 +136,11 @@ services:
       dockerfile: Dockerfile
     container_name: gtfs_analytics
     restart: unless-stopped
-    mem_limit: 1g
+    # a GTFS-static reload holds old and new lookups at once
+    # (measured peak RSS ~1.15 GB vs ~0.7 GB for a single load), and the
+    # service-date reload now runs daily. Columnar lookups are the long-term
+    # fix — see README's Known Limitations.
+    mem_limit: 2g
     environment:
       <<: *common-env
       KAFKA_BROKERS: kafka:29092
