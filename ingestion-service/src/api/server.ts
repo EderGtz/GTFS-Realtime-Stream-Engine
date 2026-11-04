@@ -1,6 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import compression from 'compression';
 import { join } from 'node:path';
 import type pg from 'pg';
 import { rateLimiter } from './middleware/rateLimiter.js';
@@ -20,6 +21,9 @@ import type { ApiCollections } from '../db/connection.js';
  */
 export function createApp(collections?: ApiCollections, pgPool?: pg.Pool): express.Express {
     const app = express();
+
+    app.set('trust proxy', 0);
+    app.use(compression());
 
     app.use(helmet({
         hsts: false,

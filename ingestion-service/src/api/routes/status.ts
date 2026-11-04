@@ -38,6 +38,7 @@ export function createStatusRouter(collections: ApiCollections): Router {
         try {
             // Serve from cache if fresh enough.
             if (cachedPayload && Date.now() - cachedAt < CACHE_TTL_MS) {
+                res.set('Cache-Control', 'public, max-age=15');
                 res.json(cachedPayload);
                 return;
             }
@@ -95,6 +96,7 @@ export function createStatusRouter(collections: ApiCollections): Router {
                 { delay_count: delays.length, bunching_count: bunching.length, duration_ms: Date.now() - start },
                 'GET /v1/status/live served',
             );
+            res.set('Cache-Control', 'public, max-age=15');
             res.json(response);
         } catch (err) {
             next(err);
