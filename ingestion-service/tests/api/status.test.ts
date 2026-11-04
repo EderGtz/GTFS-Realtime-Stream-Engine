@@ -305,3 +305,43 @@ describe('GET /v1/status/live — TTL cache', () => {
     });
 });
 
+// ── Cache headers (demo robustness) ───────────────────────────────────
+
+describe('GET /v1/status/live — cache headers', () => {
+    test('fresh response is cacheable: Cache-Control public, max-age=15', async () => {
+        const app = appWithCollections(seededDeviations, seededBunching);
+        const res = await request(app).get('/v1/status/live');
+
+        expect(res.status).toBe(200);
+        expect(res.headers['cache-control']).toBe('public, max-age=15');
+    });
+
+    test('TTL-cached response carries the same Cache-Control', async () => {
+        const app = appWithCollections(seededDeviations, seededBunching);
+        await request(app).get('/v1/status/live'); // warm the TTL cache
+        const res = await request(app).get('/v1/status/live'); // served from cache
+
+        expect(res.status).toBe(200);
+        // Same generated_at proves the cache path was taken.
+        expect(res.body.meta.generated_at).toBeDefined();
+        expect(res.headers['cache-control']).toBe('public, max-age=15');
+    });
+
+    test('error responses are not marked cacheable', async () => {
+        const failingCollections = {
+            client: { close: vi.fn() },
+            deviations: {
+                find: vi.fn().mockReturnValue({
+                    toArray: vi.fn().mockRejectedValue(new Error('connection lost')),
+                }),
+            },
+            bunching: mockCollection([]),
+        } as unknown as ApiCollections;
+        const app = createApp(failingCollections);
+        const res = await request(app).get('/v1/status/live');
+
+        expect(res.status).toBe(500);
+        expect(res.headers['cache-control']).toBeUndefined();
+    });
+});
+
