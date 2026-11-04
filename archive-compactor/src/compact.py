@@ -49,8 +49,7 @@ def _sql_str(value: str) -> str:
 
 
 def _fold_hour(src_path: Path, dst_path: Path) -> int:
-    """Count one hour's raw lines and fold them into one Parquet file.
-    """
+    """Count one hour's raw lines and fold them into one Parquet file."""
     read_sql = _RAW_LINES_READ_SQL.format(source=_sql_str(str(src_path)))
     con = duckdb.connect()
     try:
