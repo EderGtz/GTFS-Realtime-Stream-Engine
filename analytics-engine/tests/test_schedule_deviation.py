@@ -124,6 +124,35 @@ class TestResolveScheduledDatetimeDst:
         resolved = resolve_scheduled_datetime(actual, 8 * 3600 + 15 * 60)
         assert resolved == eastern_ts("2026-11-03 08:15:00")
 
+    def test_spring_forward_day_early_trip(self):
+        # 2027-03-14 (US spring-forward) is a 23-hour day: the spec anchor
+        # (noon minus 12h) lands
+        # at 23:00 of the previous wall day, so pre-jump schedule strings sit
+        # one wall-hour early -- "01:30:00" resolves to 00:30 EST. That is the
+        # spec's absolute-arithmetic behavior on a shortened day.
+        actual = pd.Timestamp("2027-03-14 05:35", tz="UTC").tz_convert(
+            EASTERN
+        )  # 00:35 EST
+        resolved = resolve_scheduled_datetime(actual, 90 * 60)
+        assert resolved == pd.Timestamp("2027-03-14 05:30", tz="UTC")
+
+    def test_spring_forward_trip_across_the_gap(self):
+        # Observed just before the jump, scheduled just after it: the seam is
+        # continuous in absolute time and no nonexistent wall time is built.
+        actual = pd.Timestamp("2027-03-14 06:55", tz="UTC").tz_convert(
+            EASTERN
+        )  # 01:55 EST
+        resolved = resolve_scheduled_datetime(actual, 3 * 3600 + 15 * 60)
+        assert resolved == pd.Timestamp("2027-03-14 07:15", tz="UTC")  # 03:15 EDT
+
+    def test_spring_forward_past_midnight_time(self):
+        # 25:15:00 on the 2027-03-14 service day = 01:15 EDT on Mar 15.
+        actual = pd.Timestamp("2027-03-15 05:20", tz="UTC").tz_convert(
+            EASTERN
+        )  # 01:20 EDT
+        resolved = resolve_scheduled_datetime(actual, 25 * 3600 + 15 * 60)
+        assert resolved == pd.Timestamp("2027-03-15 05:15", tz="UTC")
+
 
 class TestToEastern:
     def test_converts_naive_utc_to_eastern(self):

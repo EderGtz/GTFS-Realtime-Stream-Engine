@@ -416,6 +416,89 @@ class TestAnalyticsConsumer:
         assert result.bunching_actions[0][0] == "new"
         assert result.bunching_actions[0][1] is fake_event
 
+    @staticmethod
+    def _write_minimal_gtfs(path) -> None:
+        pd.DataFrame([{"trip_id": "t", "route_id": "R", "direction_id": 0}]).to_csv(
+            path / "trips.txt", index=False
+        )
+        pd.DataFrame(
+            [
+                {
+                    "trip_id": "t",
+                    "stop_sequence": 1,
+                    "arrival_time": "08:00:00",
+                    "departure_time": "08:00:00",
+                    "stop_id": "s1",
+                }
+            ]
+        ).to_csv(path / "stop_times.txt", index=False)
+        pd.DataFrame([{"stop_id": "s1"}]).to_csv(path / "stops.txt", index=False)
+        pd.DataFrame([{"route_id": "R", "route_long_name": "R"}]).to_csv(
+            path / "routes.txt", index=False
+        )
+
+    def test_service_date_reload_runs_every_iteration_not_on_the_24h_gate(
+        self, tmp_path, monkeypatch
+    ):
+        """C1 margin (review follow-up): crossing the agency-local service
+        date must force a reload on the very next loop iteration even when the
+        daily network-check gate is still closed."""
+        from datetime import date
+
+        import gtfs_static.loader as loader_mod
+
+        self._write_minimal_gtfs(tmp_path)
+        state = {"date": date(2026, 11, 2)}
+        monkeypatch.setattr(loader_mod, "_agency_today", lambda now=None: state["date"])
+        download_spy = MagicMock()
+        monkeypatch.setattr("consumer.download_and_extract_gtfs", download_spy)
+
+        sink = MagicMock()
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"},
+            topic="test",
+            on_window_result=sink,
+            gtfs_dir=tmp_path,
+        )
+        # Daily network gate just closed: only the date check may fire.
+        consumer._last_gtfs_refresh_check = time.time()
+
+        state["date"] = date(2026, 11, 4)  # midnight crossed
+        consumer._maybe_refresh_gtfs_static()
+
+        assert consumer.static_data._current_service_date == date(2026, 11, 4)
+        download_spy.assert_not_called()  # network gate stayed closed
+
+    def test_no_reload_when_service_date_unchanged_and_gate_closed(
+        self, tmp_path, monkeypatch
+    ):
+        from datetime import date
+
+        import gtfs_static.loader as loader_mod
+
+        self._write_minimal_gtfs(tmp_path)
+        monkeypatch.setattr(
+            loader_mod, "_agency_today", lambda now=None: date(2026, 11, 2)
+        )
+        download_spy = MagicMock()
+        monkeypatch.setattr("consumer.download_and_extract_gtfs", download_spy)
+
+        sink = MagicMock()
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"},
+            topic="test",
+            on_window_result=sink,
+            gtfs_dir=tmp_path,
+        )
+        consumer._last_gtfs_refresh_check = time.time()
+        load_spy = MagicMock()
+        monkeypatch.setattr(consumer.static_data, "load", load_spy)
+
+        consumer._maybe_refresh_gtfs_static()
+
+        load_spy.assert_not_called()
+        download_spy.assert_not_called()
+
 
 class TestLocationEnrichment:
     """Tests for AnalyticsConsumer._enrich_with_location, which attaches

@@ -802,6 +802,54 @@ class TestServiceDateLifecycle:
         )
 
 
+class TestUnfilteredGuard:
+    """Fail-open is bounded (review follow-up): unfiltered lookups over
+    MAX_UNFILTERED_STOP_TIMES rows refuse to load -- the real bundle measures
+    ~3.1 GB reload peak unfiltered, far past the 2g mem_limit."""
+
+    def _write_bundle(self, path, trips):
+        pd.DataFrame(trips).to_csv(path / "trips.txt", index=False)
+        pd.DataFrame(
+            [
+                {
+                    "trip_id": t["trip_id"],
+                    "stop_sequence": 1,
+                    "arrival_time": "08:00:00",
+                    "departure_time": "08:00:00",
+                    "stop_id": "s1",
+                }
+                for t in trips
+            ]
+        ).to_csv(path / "stop_times.txt", index=False)
+        pd.DataFrame([{"stop_id": "s1"}]).to_csv(path / "stops.txt", index=False)
+        pd.DataFrame([{"route_id": "R", "route_long_name": "R"}]).to_csv(
+            path / "routes.txt", index=False
+        )
+
+    def test_oversized_unfiltered_bundle_refuses_to_load(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("gtfs_static.loader.MAX_UNFILTERED_STOP_TIMES", 1)
+        self._write_bundle(
+            tmp_path,
+            [
+                {"trip_id": "a", "route_id": "R", "direction_id": 0},
+                {"trip_id": "b", "route_id": "R", "direction_id": 0},
+            ],
+        )
+        data = GtfsStaticData(tmp_path)
+        with pytest.raises(ValueError, match="Refusing to build unfiltered"):
+            data.load()
+
+    def test_small_unfiltered_bundle_still_fails_open(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("gtfs_static.loader.MAX_UNFILTERED_STOP_TIMES", 100)
+        self._write_bundle(
+            tmp_path,
+            [{"trip_id": "a", "route_id": "R", "direction_id": 0}],
+        )
+        data = GtfsStaticData(tmp_path)
+        data.load()
+        assert ("a", 1) in data.stop_times_lookup
+
+
 class TestTripTerminalLookup:
     """Terminal-staging exclusion support (A1): each trip maps to its first
     and last stop so bunching can exclude vehicles staged at a terminal."""

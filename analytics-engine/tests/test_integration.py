@@ -28,7 +28,11 @@ from testcontainers.community.mongodb import MongoDbContainer
 from consumer import AnalyticsConsumer, WindowResult
 from db.writer import MetricsWriter
 from gtfs_static.loader import GtfsStaticData
-from metrics.bunching import BunchingEvent
+from metrics.bunching import (
+    TERMINAL_RADIUS_METERS,
+    BunchingEvent,
+    displacement_meters,
+)
 from metrics.schedule_deviation import DeviationResult, to_eastern
 
 # Only run when Docker is available; skip in environments without it.
@@ -389,9 +393,38 @@ def _pick_scheduled_stop(static: GtfsStaticData):
             or stop_info.stop_lon is None
         ):
             continue
+        # Mid-route only: the first and last stop of a trip are terminals, and
+        # the bunching detector (A1) deliberately excludes pairs staged at
+        # terminals -- planting the e2e pings at one suppresses the very event
+        # under test. The check is geometric (the detector uses distance, not
+        # stop_sequence), so candidates within TERMINAL_RADIUS_METERS of a
+        # terminal stop are skipped too.
+        first_stop, last_stop = static.trip_terminal_lookup.get(trip_id, (None, None))
+        near_terminal = any(
+            term is not None
+            and (
+                term.stop_id == scheduled.stop_id
+                or (
+                    term.stop_lat is not None
+                    and term.stop_lon is not None
+                    and displacement_meters(
+                        stop_info.stop_lat,
+                        stop_info.stop_lon,
+                        term.stop_lat,
+                        term.stop_lon,
+                    )
+                    <= TERMINAL_RADIUS_METERS
+                )
+            )
+            for term in (first_stop, last_stop)
+        )
+        if near_terminal:
+            continue
         route_id = static.trip_route_lookup[trip_id]
         return trip_id, stop_sequence, scheduled, stop_info, route_id
-    raise AssertionError("fixture feed has no scheduled stop with coordinates")
+    raise AssertionError(
+        "fixture feed has no mid-route scheduled stop with coordinates"
+    )
 
 
 class TestEndToEndPipeline:

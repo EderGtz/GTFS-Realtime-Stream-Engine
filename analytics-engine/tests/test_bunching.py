@@ -435,6 +435,20 @@ class TestDSTAmbiguousHour:
         close_pairs = find_close_pairs(pings, {"t1": 0})
         assert len(close_pairs) == 1
 
+    def test_bucket_spans_the_spring_gap(self):
+        # 2027-03-14 (US spring-forward): 02:00-02:59 EST never happens (the
+        # clock jumps to 03:00 EDT). Bucketing floors the absolute instant, so
+        # pings on either side of the jump keep their spacing and no nonexistent
+        # wall time is ever built.
+        before = pd.Timestamp("2027-03-14 06:59:00", tz="UTC").tz_convert(
+            EASTERN
+        )  # 01:59 EST
+        after = pd.Timestamp("2027-03-14 07:01:00", tz="UTC").tz_convert(
+            EASTERN
+        )  # 03:01 EDT
+        b1, b2 = _bucket(before), _bucket(after)
+        assert b2 - b1 == pd.Timedelta(minutes=2)
+
 
 class TestTerminalStagingExclusion:
     """A1: vehicles parked together at a route terminal or layover are staged,
