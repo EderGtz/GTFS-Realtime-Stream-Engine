@@ -40,6 +40,13 @@ from utils.logger import get_logger
 _REQUIRED_FILES = ("stops.txt", "trips.txt", "stop_times.txt", "routes.txt")
 _OPTIONAL_VERSION_FILE = "feed_info.txt"
 
+# Unfiltered (fail-open) lookups are bounded: the real MBTA bundle measures
+# ~1.8 GB peak RSS for a single unfiltered load and ~3.1 GB for a reload, far
+# past the 2g mem_limit. Refusing large unfiltered rebuilds fails loud (or
+# keeps the previous snapshot via reload_if_changed) instead of being
+# OOM-killed. 1.5M rows is the measured ceiling for a ~2 GB reload peak.
+MAX_UNFILTERED_STOP_TIMES = 1_500_000
+
 # analytics-engine/src/gtfs_static/loader.py. parents[2] == analytics-engine/
 _DEFAULT_GTFS_DIR = Path(__file__).resolve().parents[2] / "data" / "MBTA_GTFS"
 
@@ -138,6 +145,7 @@ class GtfsStaticData:
         self._validate_columns("routes.txt", routes_df)
 
         service_date = _agency_today()
+        filtered = False
 
         # Filter to active service days before building lookups.
         # Only trips whose service_id is active today (± 1 day) can ever match live pings.
@@ -154,6 +162,7 @@ class GtfsStaticData:
                 stop_times_df = stop_times_df[
                     stop_times_df["trip_id"].astype(str).isin(filtered_trip_ids)
                 ].copy()
+                filtered = True
                 logger.info(
                     "Service-day filter: %d -> %d trips, %d -> %d stop_times "
                     "(%d active service_ids)",
@@ -163,6 +172,16 @@ class GtfsStaticData:
                     len(stop_times_df),
                     len(active_service_ids),
                 )
+
+        if not filtered and len(stop_times_df) > MAX_UNFILTERED_STOP_TIMES:
+            raise ValueError(
+                f"Refusing to build unfiltered lookups from {len(stop_times_df)} "
+                f"stop_times rows (limit {MAX_UNFILTERED_STOP_TIMES}): an "
+                "unfiltered rebuild peaks at several times the normal memory "
+                "(measured ~3.1 GB on the real MBTA bundle) and would be "
+                "OOM-killed. Fix the calendar data so the service-day filter "
+                "can apply."
+            )
 
         # Build everything into local variables first.
         # The current snapshot is only replaced after all validation/building succeeds
