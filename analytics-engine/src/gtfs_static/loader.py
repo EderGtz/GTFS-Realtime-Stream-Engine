@@ -206,7 +206,7 @@ class GtfsStaticData:
         day), so without the date check a bundle that stops republishing
         silently loses every service whose window expires
         Returns whether a reload actually happened."""
-        if self.has_changed() or self._service_date_stale():
+        if self.has_changed() or self.service_date_stale():
             try:
                 self.load()
                 return True
@@ -221,7 +221,10 @@ class GtfsStaticData:
                 return False
         return False
 
-    def _service_date_stale(self) -> bool:
+    def service_date_stale(self) -> bool:
+        """True when the agency-local service date advanced past the date the
+        active-service filter was built for. Cheap (one date comparison) so
+        the consumer can check it every loop iteration."""
         return (
             self._current_service_date is not None
             and self._current_service_date != _agency_today()
@@ -306,7 +309,19 @@ class GtfsStaticData:
             except (pd.errors.EmptyDataError, pd.errors.ParserError):
                 logger.warning("calendar_dates.txt is empty or malformed, skipping.")
 
-        return active if active else None
+        if not active:
+            # Fail open (keep all trips) rather than build an empty lookup set
+            # -- an empty result here more likely means a calendar quirk than
+            # a real shutdown. Loud because the unfiltered bundle is several
+            # times the memory of a filtered one (see the mem_limit comment in
+            # docker-compose.yml).
+            logger.warning(
+                "No service_id active on %s ± 1 day despite calendar data; "
+                "failing open and loading ALL trips (much higher peak memory).",
+                today,
+            )
+            return None
+        return active
 
     def _validate_files_exist(self) -> None:
         missing = [
@@ -440,29 +455,28 @@ class GtfsStaticData:
     ) -> dict[str, tuple[StopInfo | None, StopInfo | None]]:
         """trip_id -> (first stop, last stop) for terminal-staging exclusion in
         bunching detection (A1): vehicles parked together at a trip's terminal
-        or layover are not bunched. Separate pass over stop_times_df keeps the
-        main lookup builders unchanged."""
-        first: dict[str, tuple[int, str | None]] = {}
-        last: dict[str, tuple[int, str | None]] = {}
+        or layover are not bunched. Vectorized via groupby idxmin/idxmax --
+        an itertuples pass over the full stop_times frame was O(rows) Python."""
         has_stop_id = "stop_id" in stop_times_df.columns
-
-        for row in stop_times_df.itertuples():
-            trip_id = str(row.trip_id)
-            seq = int(row.stop_sequence)
-            stop_id = (
-                str(row.stop_id) if has_stop_id and pd.notna(row.stop_id) else None
-            )
-            if trip_id not in first or seq < first[trip_id][0]:
-                first[trip_id] = (seq, stop_id)
-            if trip_id not in last or seq > last[trip_id][0]:
-                last[trip_id] = (seq, stop_id)
+        cols = ["trip_id", "stop_sequence"] + (["stop_id"] if has_stop_id else [])
+        st = stop_times_df[cols]
+        grouped = st.groupby("trip_id")["stop_sequence"]
+        first_rows = st.loc[grouped.idxmin()]
+        last_rows = st.loc[grouped.idxmax()]
 
         lookup: dict[str, tuple[StopInfo | None, StopInfo | None]] = {}
-        for trip_id, (_, first_stop_id) in first.items():
-            last_stop_id = last[trip_id][1]
-            lookup[trip_id] = (
-                stops_lookup.get(first_stop_id) if first_stop_id else None,
-                stops_lookup.get(last_stop_id) if last_stop_id else None,
+        for f_row, l_row in zip(
+            first_rows.itertuples(index=False), last_rows.itertuples(index=False)
+        ):
+            f_id = (
+                str(f_row.stop_id) if has_stop_id and pd.notna(f_row.stop_id) else None
+            )
+            l_id = (
+                str(l_row.stop_id) if has_stop_id and pd.notna(l_row.stop_id) else None
+            )
+            lookup[str(f_row.trip_id)] = (
+                stops_lookup.get(f_id) if f_id else None,
+                stops_lookup.get(l_id) if l_id else None,
             )
         return lookup
 
