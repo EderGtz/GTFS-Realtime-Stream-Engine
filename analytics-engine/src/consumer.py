@@ -363,6 +363,21 @@ class AnalyticsConsumer:
         self._backoff_until = 0.0
 
     def _maybe_refresh_gtfs_static(self) -> None:
+        if self.static_data.service_date_stale():
+            try:
+                self.static_data.load()
+                logger.info(
+                    "Service date advanced; reloaded lookups with a fresh "
+                    "active-service window."
+                )
+            except (FileNotFoundError, ValueError) as err:
+                logger.error(
+                    "GTFS-static date reload failed, continuing with previous "
+                    "snapshot: %s",
+                    err,
+                )
+
+        # Network check (HEAD / ETag / download) stays on the daily interval.
         now = time.time()
         if now - self._last_gtfs_refresh_check < self._gtfs_refresh_interval:
             return
@@ -373,7 +388,6 @@ class AnalyticsConsumer:
             download_kwargs: dict = {}
             if self._gtfs_dir is not None:
                 download_kwargs["target_dir"] = self._gtfs_dir
-            print("refres.py called")
             download_and_extract_gtfs(**download_kwargs)
 
             # Step 2: reload lookups if the on-disk files actually changed

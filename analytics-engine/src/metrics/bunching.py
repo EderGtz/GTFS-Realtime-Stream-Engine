@@ -182,18 +182,19 @@ def find_close_pairs(
     return close_pairs
 
 
-def _separated_buckets(
+def _separated_index(
     separated_pairs: pd.DataFrame | None,
     group_cols: list[str],
-    key: tuple,
-) -> list[pd.Timestamp]:
-    """Time buckets where this specific pair was observed far apart."""
+) -> dict[tuple, list[pd.Timestamp]]:
+    """Map pair key -> sorted time buckets where that pair was observed far
+    apart. Built once per call so the run loop stays O(rows), not
+    O(groups x rows)."""
     if separated_pairs is None or separated_pairs.empty:
-        return []
-    sep = separated_pairs
-    for col, val in zip(group_cols, key):
-        sep = sep[sep[col] == val]
-    return sorted(sep["time_bucket"])
+        return {}
+    index: dict[tuple, list[pd.Timestamp]] = {}
+    for key, group in separated_pairs.groupby(group_cols):
+        index[key if isinstance(key, tuple) else (key,)] = sorted(group["time_bucket"])
+    return index
 
 
 def detect_bunching_events(
@@ -205,7 +206,8 @@ def detect_bunching_events(
     Collapse consecutive-bucket close-pair observations into discrete bunching events,
     keeping only runs that meet the persistence requirement (notebook 04, Section B/C).
 
-    Consecutiveness tolerates one skipped poll bucke, but `separated_pairs` rows -- the pair observed
+    Consecutiveness tolerates one skipped poll bucket (M2: cadence jitter
+    occasionally misses one), but `separated_pairs` rows -- the pair observed
     far apart in a shared bucket, from find_close_pairs(return_separated=True)
     -- mark a real break and still split the run. Without that frame the two
     situations are indistinguishable in close_pairs alone.
@@ -219,13 +221,12 @@ def detect_bunching_events(
     )
 
     group_cols = ["route_id", "direction_id", "vehicle_a", "vehicle_b"]
+    sep_index = _separated_index(separated_pairs, group_cols)
     for key, group in close_pairs.groupby(group_cols):
         group = group.reset_index(drop=True)
         time_buckets = pd.DatetimeIndex(group["time_bucket"])
         run_start = 0
-        sep_buckets = _separated_buckets(
-            separated_pairs, group_cols, key if isinstance(key, tuple) else (key,)
-        )
+        sep_buckets = sep_index.get(key if isinstance(key, tuple) else (key,), [])
 
         for i in range(1, len(group) + 1):
             if i >= len(group):
