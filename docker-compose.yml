@@ -101,6 +101,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *common-env
+      # Healthchecks.io dead-man's-switch ping URL. Empty disables the heartbeat.
+      HEALTHCHECKS_PING_URL: ${HEALTHCHECKS_PING_URL:-}
     depends_on:
       kafka:
         condition: service_healthy
@@ -146,6 +148,8 @@ services:
       KAFKA_BROKERS: kafka:29092
       KAFKA_TOPIC: raw.vehicle-positions
       KAFKA_GROUP_ID: analytics-engine
+      # Healthchecks.io check URL for the data-quality alerts. Empty disables the notifier.
+      HEALTHCHECKS_DATA_URL: ${HEALTHCHECKS_DATA_URL:-}
     healthcheck:
       test: ["CMD-SHELL", "find /tmp/analytics-heartbeat -mmin -3 | grep -q ."]
       interval: 30s
