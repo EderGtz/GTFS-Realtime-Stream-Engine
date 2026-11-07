@@ -10,10 +10,12 @@ import pandas as pd
 import pytest
 
 from metrics.schedule_deviation import (
+    MatchingStats,
     ScheduledStopTime,
     collapse_to_first_arrival,
     compute_arrival_deviations,
     compute_departure_deviations,
+    compute_matching_stats,
     parse_gtfs_time_offset,
     resolve_scheduled_datetime,
     to_eastern,
@@ -313,3 +315,86 @@ class TestComputeDepartureDeviations:
         }
         results = compute_departure_deviations(dwell_pings, lookup)
         assert results == []
+
+
+class TestMatchingStats:
+    """  per-window ping-matching counter (hardening-pass  )."""
+
+    @staticmethod
+    def _lookup() -> dict[tuple[str, int], ScheduledStopTime]:
+        return {
+            ("t1", 3): ScheduledStopTime(
+                trip_id="t1",
+                stop_sequence=3,
+                arrival_time=8 * 3600,
+                departure_time=None,
+            ),
+            ("t1", 4): ScheduledStopTime(
+                trip_id="t1",
+                stop_sequence=4,
+                arrival_time=8 * 3600,
+                departure_time=None,
+            ),
+        }
+
+    def test_categorizes_matched_missing_and_unmatched(self):
+        pings = pd.DataFrame(
+            {
+                "trip_id": ["t1", "t1", "t1", "ghost-trip", None],
+                "current_stop_sequence": [3, 4.0, 99, 3, 3],
+            }
+        )
+        stats = compute_matching_stats(pings, self._lookup())
+
+        # t1/3 and t1/4 match (float 4.0 normalizes to int 4);
+        # t1/99 and ghost-trip/3 are lookup misses; the null trip is a
+        # missing-field drop.  Categories are mutually exclusive.
+        assert stats.total_pings == 5
+        assert stats.matched_pings == 2
+        assert stats.unmatched_pings == 2
+        assert stats.missing_field_pings == 1
+        assert stats.gate_dropped_events == 0
+        assert stats.matched_ratio == pytest.approx(0.4)
+
+    def test_missing_columns_count_as_missing_fields(self):
+        """A malformed frame must feed the counter, never crash the window."""
+        pings = pd.DataFrame({"stop_id": ["1", "2"]})
+        stats = compute_matching_stats(pings, self._lookup())
+
+        assert stats.total_pings == 2
+        assert stats.missing_field_pings == 2
+        assert stats.matched_pings == 0
+        assert stats.unmatched_pings == 0
+
+    def test_null_sequence_is_a_missing_field(self):
+        pings = pd.DataFrame(
+            {"trip_id": ["t1", "t1"], "current_stop_sequence": [3, None]}
+        )
+        stats = compute_matching_stats(pings, self._lookup())
+
+        assert stats.matched_pings == 1
+        assert stats.missing_field_pings == 1
+
+    def test_unparseable_sequence_is_a_missing_field(self):
+        pings = pd.DataFrame(
+            {"trip_id": ["t1"], "current_stop_sequence": ["not-a-number"]}
+        )
+        stats = compute_matching_stats(pings, self._lookup())
+
+        assert stats.missing_field_pings == 1
+        assert stats.matched_pings == 0
+
+    def test_empty_window_has_no_ratio(self):
+        stats = compute_matching_stats(pd.DataFrame(), self._lookup())
+
+        assert stats == MatchingStats(0, 0, 0, 0)
+        assert stats.matched_ratio is None
+
+    def test_add_accumulates_componentwise(self):
+        a = MatchingStats(10, 8, 1, 1, gate_dropped_events=2)
+        b = MatchingStats(5, 2, 2, 1, gate_dropped_events=0)
+
+        total = a + b
+
+        assert total == MatchingStats(15, 10, 3, 2, gate_dropped_events=2)
+        assert total.matched_ratio == pytest.approx(10 / 15)

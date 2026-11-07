@@ -145,6 +145,119 @@ def to_eastern(timestamp) -> pd.Timestamp:
     return ts.tz_convert(AGENCY_TZ)
 
 
+@dataclass(frozen=True)
+class MatchingStats:
+    """
+    per-window counter of how the window's raw pings matched against the loaded schedule
+
+    Before this existed, pings that could never produce a deviation (missing
+    fields, or a trip_id the active-service filter doesn't know) were dropped
+    silently -- which produced a problem on Nov 1-2 2026 :
+    the raw feed kept flowing while the matching stage dropped nearly everything.
+
+    Categories (mutually exclusive, so the sum of them equals total_pings):
+
+    - matched_pings:        (trip_id, current_stop_sequence) found in the lookup
+    - missing_field_pings:  trip_id or current_stop_sequence absent/unparseable
+    - unmatched_pings:      both fields present but the key is not in the lookup
+                            (unknown trip -- e.g. a stale active-service filter
+                            -- or an off-schedule stop sequence)
+    - gate_dropped_events:  matched arrival events later rejected by the
+                            consumer's ±30-min deviation gate. NOT part of
+                            total_pings (events, not pings) and deliberately not
+                            counted against matched_ratio: a ghost-shift outlier
+                            is a matching-quality signal of its own, and the
+                            deviation-volume alert covers its aggregate effect.
+    """
+
+    total_pings: int
+    matched_pings: int
+    missing_field_pings: int
+    unmatched_pings: int
+    gate_dropped_events: int = 0
+
+    @property
+    def matched_ratio(self) -> float | None:
+        """matched_pings / total_pings, or None for an empty window (0/0 is not
+        a ratio -- an empty window means 'no data', which is the heartbeat's
+        signal to report, not the matcher's)."""
+        if self.total_pings == 0:
+            return None
+        return self.matched_pings / self.total_pings
+
+    def __add__(self, other: MatchingStats) -> MatchingStats:
+        """Component-wise sum, used for cumulative totals across windows."""
+        return MatchingStats(
+            total_pings=self.total_pings + other.total_pings,
+            matched_pings=self.matched_pings + other.matched_pings,
+            missing_field_pings=self.missing_field_pings + other.missing_field_pings,
+            unmatched_pings=self.unmatched_pings + other.unmatched_pings,
+            gate_dropped_events=self.gate_dropped_events + other.gate_dropped_events,
+        )
+
+
+def compute_matching_stats(
+    pings: pd.DataFrame,
+    stop_times_lookup: dict[tuple[str, int], ScheduledStopTime],
+) -> MatchingStats:
+    """
+    Count how the window's raw pings match against the schedule lookup.
+
+    Runs on the FULL window frame (before the null-stop_id scoping and the
+    STOPPED_AT collapsing), because the counter's question is "is live traffic
+    matching the loaded schedule at all?" -- scoping first would hide exactly
+    the population the Nov 1-2 incident lost. A ping matches when its
+    (trip_id, current_stop_sequence) key exists in stop_times_lookup, which is
+    the same key compute_arrival_deviations() looks up.
+
+    Pure and defensive by design: a malformed frame (missing columns, null
+    fields) increments the missing-field counter instead of raising so the
+    counter must never be the thing that breaks a window.
+    """
+    total = len(pings)
+    if total == 0:
+        return MatchingStats(0, 0, 0, 0)
+
+    trip_ids = (
+        pings["trip_id"]
+        if "trip_id" in pings.columns
+        else pd.Series([None] * total, index=pings.index)
+    )
+    sequences = (
+        pings["current_stop_sequence"]
+        if "current_stop_sequence" in pings.columns
+        else pd.Series([None] * total, index=pings.index)
+    )
+
+    matched = 0
+    missing = 0
+    unmatched = 0
+    for trip, seq in zip(trip_ids, sequences):
+        if trip is None or seq is None or pd.isna(trip) or pd.isna(seq):
+            missing += 1
+            continue
+        trip_id = str(trip)
+        if not trip_id:
+            missing += 1
+            continue
+        try:
+            key = (trip_id, int(seq))
+        except (TypeError, ValueError):
+            missing += 1
+            continue
+        if key in stop_times_lookup:
+            matched += 1
+        else:
+            unmatched += 1
+
+    return MatchingStats(
+        total_pings=total,
+        matched_pings=matched,
+        missing_field_pings=missing,
+        unmatched_pings=unmatched,
+    )
+
+
 def collapse_to_first_arrival(pings: pd.DataFrame) -> pd.DataFrame:
     """
     Collapse repeated STOPPED_AT pings for the same (vehicle_id, trip_id, stop_sequence)

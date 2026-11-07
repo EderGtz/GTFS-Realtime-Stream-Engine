@@ -110,6 +110,17 @@ class GtfsStaticData:
 
         self._current_version: str | None = None
         self._current_service_date: date | None = None
+        self._loaded_at: datetime | None = None
+
+    @property
+    def loaded_at(self) -> datetime | None:
+        """Timestamp of the most recent successful load() (UTC)."""
+        return self._loaded_at
+
+    @property
+    def version(self) -> str | None:
+        """Feed version (or file fingerprint fallback) of the loaded snapshot."""
+        return self._current_version
 
     def load(self) -> None:
         """
@@ -203,6 +214,7 @@ class GtfsStaticData:
         self.trip_route_lookup = trip_route_lookup
         self._current_version = version
         self._current_service_date = service_date
+        self._loaded_at = datetime.now(tz=UTC)
 
     def has_changed(self) -> bool:
         """

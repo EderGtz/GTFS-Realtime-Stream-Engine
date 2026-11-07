@@ -871,3 +871,28 @@ class TestTripTerminalLookup:
         assert first is not None and last is not None
         assert first.stop_id == "70001"
         assert last.stop_id == "70001"
+
+
+class TestLoadMetadata:
+    """ : loaded_at/version feed GET /v1/pipeline/status ('last static
+    reload') and the analytics pipeline_status document."""
+
+    def test_loaded_at_and_version_set_on_load(self, gtfs_dir):
+        data = GtfsStaticData(gtfs_dir)
+        assert data.loaded_at is None
+        assert data.version is None
+
+        data.load()
+
+        assert data.loaded_at is not None
+        assert data.version is not None
+        assert not data.has_changed()
+
+    def test_loaded_at_refreshes_on_reload(self, gtfs_dir):
+        data = GtfsStaticData(gtfs_dir)
+        data.load()
+        first_loaded_at = data.loaded_at
+
+        data.load()
+
+        assert data.loaded_at >= first_loaded_at

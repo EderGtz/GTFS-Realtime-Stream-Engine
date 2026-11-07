@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -11,6 +12,7 @@ from consumer import (
     WindowResult,
     _BunchingEventTracker,
     _DeviationResultTracker,
+    _window_last_message_at,
 )
 from gtfs_static.loader import StopInfo
 from metrics.bunching import BunchingEvent
@@ -1208,3 +1210,141 @@ class TestPersistBackoff:
         assert sink.call_count == 2
         mock_kafka.commit.assert_called_once_with(asynchronous=False)
         assert consumer._consecutive_failures == 0
+
+
+class TestWindowObservability:
+    """  (hardening pass): the   counter and the pipeline snapshot ride
+    on every WindowResult so /v1/pipeline/status and the data-level alerts can
+    read them without reaching back into the running consumer."""
+
+    @staticmethod
+    def _lookup() -> dict[tuple[str, int], ScheduledStopTime]:
+        return {
+            ("t1", 3): ScheduledStopTime(
+                trip_id="t1",
+                stop_sequence=3,
+                arrival_time=8 * 3600,
+                departure_time=None,
+            ),
+        }
+
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.find_close_pairs")
+    @patch("consumer.compute_arrival_deviations")
+    def test_process_window_attaches_matching_and_pipeline_stats(
+        self, mock_arr, mock_pairs, MockGtfs
+    ):
+        sink = MagicMock()
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"}, topic="test", on_window_result=sink
+        )
+        consumer.static_data.stop_times_lookup = self._lookup()
+        consumer.static_data.loaded_at = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
+        consumer.static_data.version = "feed-v1"
+        mock_pairs.return_value = (pd.DataFrame(), pd.DataFrame())
+        mock_arr.return_value = []
+
+        df = pd.DataFrame(
+            {
+                "trip_id": ["t1", "ghost-trip"],
+                "current_stop_sequence": [3, 1],
+                "stop_id": ["70001", "70001"],
+                "timestamp": ["2026-11-05T12:00:00Z", "2026-11-05T12:00:30Z"],
+                "timestamp_eastern": [
+                    ets("2026-11-05 07:00:00"),
+                    ets("2026-11-05 07:00:30"),
+                ],
+                "current_status": ["IN_TRANSIT_TO", "IN_TRANSIT_TO"],
+            }
+        )
+        consumer._process_window(df)
+
+        result: WindowResult = sink.call_args[0][0]
+        assert result.matching is not None
+        assert result.matching.total_pings == 2
+        assert result.matching.matched_pings == 1
+        assert result.matching.unmatched_pings == 1
+        assert result.matching.missing_field_pings == 0
+
+        assert result.pipeline is not None
+        assert result.pipeline.last_message_at == datetime(
+            2026, 11, 5, 12, 0, 30, tzinfo=UTC
+        )
+        assert result.pipeline.last_static_reload_at == datetime(
+            2026, 11, 5, 12, 0, tzinfo=UTC
+        )
+        assert result.pipeline.static_bundle_version == "feed-v1"
+
+    @patch("consumer.GtfsStaticData")
+    @patch("consumer.find_close_pairs")
+    @patch("consumer.compute_arrival_deviations")
+    def test_gate_drops_feed_the_matching_counter(self, mock_arr, mock_pairs, MockGtfs):
+        """The ±30-min gate's silent drops are counted ( ), one event dropped
+        here: 5 s late is kept, 45 min late is rejected."""
+        sink = MagicMock()
+        consumer = AnalyticsConsumer(
+            kafka_config={"group.id": "test"}, topic="test", on_window_result=sink
+        )
+        consumer.static_data.stop_times_lookup = self._lookup()
+        mock_pairs.return_value = (pd.DataFrame(), pd.DataFrame())
+
+        def _dev(seconds: float) -> DeviationResult:
+            return DeviationResult(
+                vehicle_id="v1",
+                trip_id="t1",
+                stop_sequence=3,
+                kind="arrival",
+                scheduled_at=ets("2026-11-05 08:00:00"),
+                actual_at=ets("2026-11-05 08:00:05"),
+                deviation_seconds=seconds,
+            )
+
+        mock_arr.return_value = [_dev(5.0), _dev(45 * 60.0)]
+
+        df = pd.DataFrame(
+            {
+                "trip_id": ["t1"],
+                "current_stop_sequence": [3],
+                "stop_id": ["70001"],
+                "timestamp_eastern": [ets("2026-11-05 08:00:05")],
+                "current_status": ["STOPPED_AT"],
+            }
+        )
+        consumer._process_window(df)
+
+        result: WindowResult = sink.call_args[0][0]
+        assert result.matching.gate_dropped_events == 1
+        assert len(result.new_deviations) == 1
+
+    @patch("consumer.GtfsStaticData")
+    def test_kafka_lag_sums_positions_across_partitions(self, MockGtfs):
+        consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test")
+        fake_kafka = MagicMock()
+        consumer.consumer = fake_kafka
+        fake_kafka.assignment.return_value = [MagicMock(), MagicMock()]
+        fake_kafka.get_watermark_offsets.side_effect = [(0, 100), (0, 50)]
+        fake_kafka.position.side_effect = [
+            [MagicMock(offset=90)],
+            [MagicMock(offset=45)],
+        ]
+
+        assert consumer.kafka_lag_messages() == 15
+
+    @patch("consumer.GtfsStaticData")
+    def test_kafka_lag_is_none_without_assignment_or_on_error(self, MockGtfs):
+        consumer = AnalyticsConsumer(kafka_config={"group.id": "test"}, topic="test")
+        fake_kafka = MagicMock()
+        consumer.consumer = fake_kafka
+
+        fake_kafka.assignment.return_value = []
+        assert consumer.kafka_lag_messages() is None
+
+        fake_kafka.assignment.side_effect = RuntimeError("broker gone")
+        assert consumer.kafka_lag_messages() is None
+
+    def test_window_last_message_at_handles_unparseable_timestamps(self):
+        df = pd.DataFrame({"timestamp": ["not-a-date", None]})
+        assert _window_last_message_at(df) is None
+
+        df_missing = pd.DataFrame({"trip_id": ["t1"]})
+        assert _window_last_message_at(df_missing) is None

@@ -77,6 +77,7 @@ import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -94,7 +95,9 @@ from metrics.bunching import (
 )
 from metrics.schedule_deviation import (
     DeviationResult,
+    MatchingStats,
     compute_arrival_deviations,
+    compute_matching_stats,
     to_eastern,
 )
 from utils.logger import get_logger
@@ -272,11 +275,45 @@ class _DeviationResultTracker:
         return fresh
 
 
+def _window_last_message_at(pings: pd.DataFrame) -> datetime | None:
+    """
+    UTC timestamp of the newest ping in the window. None when the frame carries 
+    no parseable timestamps -- honest "unknown", never a fake now().
+    """
+    if "timestamp" not in pings.columns:
+        return None
+    parsed = pd.to_datetime(pings["timestamp"], errors="coerce", utc=True)
+    newest = parsed.max()
+    if pd.isna(newest):
+        return None
+    return newest.to_pydatetime()
+
+
+@dataclass(frozen=True)
+class PipelineStats:
+    """
+    Point-in-time snapshot of the consumer's own pipeline health, attached to
+    every WindowResult. Downstream consumers (the
+    Mongo pipeline_status doc behind GET /v1/pipeline/status) read this instead
+    of reaching back into the running consumer, keeping the callback-based
+    architecture intact.
+    """
+
+    last_message_at: datetime | None  # newest ping timestamp in the window (UTC)
+    consumer_lag_messages: int | None  # position -> topic tail, None = unknown
+    last_static_reload_at: datetime | None  # GTFS-static lookups last rebuilt
+    static_bundle_version: str | None
+
+
 @dataclass
 class WindowResult:
     bunching_actions: list[tuple[str, BunchingEvent]]
     new_deviations: list[DeviationResult]
     total_records: int
+    # per-window ping-matching counter; None when a caller builds
+    # a WindowResult without it (older tests, synthetic results).
+    matching: MatchingStats | None = None
+    pipeline: PipelineStats | None = None
 
 
 class AnalyticsConsumer:
@@ -361,6 +398,33 @@ class AnalyticsConsumer:
             )
         self._consecutive_failures = 0
         self._backoff_until = 0.0
+
+    def kafka_lag_messages(self) -> int | None:
+        """
+        Best-effort count of messages between the consumer's position and the
+        topic tail, summed over assigned partitions ( , GET
+        /v1/pipeline/status). Uses cached watermarks -- maintained by polling --
+        so this stats field never blocks the consume loop on a broker round
+        trip. Returns None when there is no assignment yet
+        or the offsets can't be read; observability must never fail a window.
+        """
+        try:
+            assignment = self.consumer.assignment()
+            if not assignment:
+                return None
+            total = 0
+            for tp in assignment:
+                _low, high = self.consumer.get_watermark_offsets(tp, cached=True)
+                positions = self.consumer.position([tp])
+                if not positions:
+                    return None
+                offset = positions[0].offset
+                if high is None or offset is None or offset < 0:
+                    return None
+                total += max(0, high - offset)
+            return total
+        except Exception:  # noqa: BLE001 — observability must never fail a window
+            return None
 
     def _maybe_refresh_gtfs_static(self) -> None:
         if self.static_data.service_date_stale():
@@ -463,6 +527,12 @@ class AnalyticsConsumer:
         total_records = len(pings)
         reference_time = pings["timestamp_eastern"].max()
 
+        # count how the raw pings matched the schedule BEFORE any
+        # scoping/collapsing -- see compute_matching_stats for why. Defensive by
+        # construction: the counter must never be the thing that breaks a window.
+        matching = compute_matching_stats(pings, self.static_data.stop_times_lookup)
+        last_message_at = _window_last_message_at(pings)
+
         # Extract flat lat/lon from the GeoJSON `location` field the ingestion
         # service publishes.  GeoJSON coordinates are [longitude, latitude].
         if "location" in pings.columns:
@@ -542,6 +612,8 @@ class AnalyticsConsumer:
                     dropped,
                     MAX_DEVIATION_SECONDS // 60,
                 )
+            # the gate's silent drops become a visible counter
+            matching = replace(matching, gate_dropped_events=dropped)
 
             new_deviations = self.deviation_tracker.filter_new(
                 arrival_results,
@@ -560,6 +632,13 @@ class AnalyticsConsumer:
                 bunching_actions=bunching_actions,
                 new_deviations=new_deviations,
                 total_records=total_records,
+                matching=matching,
+                pipeline=PipelineStats(
+                    last_message_at=last_message_at,
+                    consumer_lag_messages=self.kafka_lag_messages(),
+                    last_static_reload_at=self.static_data.loaded_at,
+                    static_bundle_version=self.static_data.version,
+                ),
             )
         )
 
