@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 
 const BUNCHING_COLLECTION = 'bunching_events';
 const DEVIATION_COLLECTION = 'schedule_deviations';
+const PIPELINE_STATUS_COLLECTION = 'pipeline_status';
 
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 3_000;
@@ -45,10 +46,31 @@ export async function connectDbWithRetry(
     );
 }
 
+/**
+ * The single pipeline_status document upserted per window by the analytics
+ * engine (db/writer.py `build_pipeline_status_document`). Uses a fixed STRING
+ * _id — not an ObjectId — which is why it gets its own interface: without it
+ * the mongodb typings reject `{ _id: 'pipeline_status' }` as a filter.
+ * Fields are optional because the writer omits sections when a window carries
+ * no matching/pipeline snapshot.
+ */
+export interface PipelineStatusDocument extends Document {
+    _id: string;
+    reported_at: Date;
+    last_message_at?: Date | null;
+    consumer_lag_messages?: number | null;
+    last_static_reload_at?: Date | null;
+    static_bundle_version?: string | null;
+    window_total_records?: number;
+    matching?: Record<string, unknown> | null;
+    alerts?: string[];
+}
+
 export interface ApiCollections {
     client: MongoClient;
     bunching: Collection<Document>;
     deviations: Collection<Document>;
+    pipelineStatus: Collection<PipelineStatusDocument>;
 }
 
 /**
@@ -64,5 +86,6 @@ export async function openApiCollections(): Promise<ApiCollections> {
         client,
         bunching: db.collection(BUNCHING_COLLECTION),
         deviations: db.collection(DEVIATION_COLLECTION),
+        pipelineStatus: db.collection(PIPELINE_STATUS_COLLECTION),
     };
 }

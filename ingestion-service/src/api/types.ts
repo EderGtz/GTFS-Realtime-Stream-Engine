@@ -90,3 +90,42 @@ export interface RouteHistoryResponse {
     days: number;
     data_points: HourlyDataPoint[];
 }
+
+/**
+ * Per-window / cumulative ping-matching counts (the   counter, written by
+ * analytics-engine's metrics/schedule_deviation.MatchingStats).
+ */
+export interface MatchingCounts {
+    total_pings: number;
+    matched_pings: number;
+    missing_field_pings: number;
+    unmatched_pings: number;
+    gate_dropped_events: number;
+    matched_ratio: number | null;
+}
+
+/**   counters for the last window and accumulated since process start. */
+export interface PipelineMatching {
+    last_window: MatchingCounts;
+    cumulative: MatchingCounts;
+}
+
+/**
+ * Full response shape for GET /v1/pipeline/status — the "how would you know
+ * if it broke?" endpoint. *_age_seconds fields are computed at read time
+ * against `generated_at`, so a stale analytics engine shows up as growing
+ * status_age_seconds (and last_message_age_seconds with it).
+ */
+export interface PipelineStatusResponse {
+    generated_at: string;
+    reported_at: string;
+    status_age_seconds: number | null;
+    last_message_at: string | null;
+    last_message_age_seconds: number | null;
+    consumer_lag_messages: number | null;
+    last_static_reload_at: string | null;
+    static_bundle_version: string | null;
+    window_total_records: number;
+    matching: PipelineMatching | null;
+    alerts: string[];
+}

@@ -7,6 +7,7 @@ import type pg from 'pg';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { createStatusRouter } from './routes/status.js';
+import { createPipelineStatusRouter } from './routes/pipelineStatus.js';
 import { createRoutePerformanceRouter } from './routes/routePerformance.js';
 import { createRouteHistoryRouter } from './routes/routeHistory.js';
 import { logger } from '../utils/logger.js';
@@ -72,6 +73,7 @@ export function createApp(collections?: ApiCollections, pgPool?: pg.Pool): expre
     // Delays route — only when MongoDB collections are available
     if (collections) {
         app.use('/v1', createStatusRouter(collections));
+        app.use('/v1', createPipelineStatusRouter(collections));
         app.use('/v1', createRoutePerformanceRouter(collections));
     }
 
