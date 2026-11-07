@@ -16,7 +16,8 @@
  * excluded from the math and render as gaps, never as false 0% dips.
  */
 
-/// <reference path="../globals.d.ts" />
+import { Chart } from 'chart.js';
+import 'chart.js/auto';
 
 import type { HourlyDataPoint } from '../../src/api/types.js';
 import { formatPct, formatSeconds, formatSignedSeconds } from '../lib/format.js';
@@ -538,9 +539,7 @@ function drawBuckets(
  */
 function drawChart(canvasId: string, points?: HourlyDataPoint[] | null, days?: number): void {
     const canvas = document.getElementById(canvasId) as HTMLCanvasElement | null;
-    // `typeof Chart === 'undefined'` guards the CDN script not being loaded
-    // yet (the original checked window.Chart the same way).
-    if (!canvas || typeof Chart === 'undefined' || !points || points.length === 0) return;
+    if (!canvas || !points || points.length === 0) return;
 
     // Destroy the previous chart so the canvas can be reused.
     if (currentChart) {

@@ -12,15 +12,15 @@
  * its layer objects as parameters for exactly that reason.
  */
 
-/// <reference path="./globals.d.ts" />
-
 // Shared contract types — the SAME interfaces the API declares. If the API
 // shape changes, this module and every consumer fail to compile.
 import type { BunchingEntry, DelayEntry } from '../src/api/types.js';
 import { formatAge } from './lib/format.js';
 
-// Leaflet TYPE names (values still come from the `L` CDN global declared in
-// globals.d.ts). Named type imports avoid shadowing the `L` value binding.
+// The namespace import keeps the familiar `L.` call sites.
+import * as L from 'leaflet';
+
+// Leaflet TYPE names (distinct from the `L` value binding, so no shadowing).
 import type { CircleMarker, LayerGroup, Polyline } from 'leaflet';
 
 // ── Constants ────────────────────────────────────────────────────────────

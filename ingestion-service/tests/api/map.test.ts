@@ -53,7 +53,21 @@ describe('GET /map', () => {
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toMatch(/html/);
         expect(res.text).toContain('MBTA Live Transit Map');
-        expect(res.text).toContain('leaflet');
+        // Frontend deps are self-hosted: no CDN tags — Leaflet/Chart.js ride
+        // inside /dist/map.js and Leaflet's CSS is emitted as /dist/map.css.
+        expect(res.text).not.toContain('unpkg.com');
+        expect(res.text).toContain('/dist/map.css');
+    });
+
+    test('CSP trusts no third-party script/style origins', async () => {
+        const app = createApp();
+        const res = await request(app).get('/map');
+
+        const csp = res.headers['content-security-policy'];
+        expect(csp).toBeDefined();
+        expect(csp).not.toContain('unpkg');
+        expect(csp).toContain("script-src 'self'");
+        expect(csp).not.toMatch(/script-src[^;]*https?:/);
     });
 
     test('serves map.html via /map.html path', async () => {
@@ -82,6 +96,18 @@ describe('GET /map', () => {
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toMatch(/javascript/);
         expect(res.text).toContain('/v1/status/live');
+        // Leaflet and Chart.js are packed in — no CDN references survive.
+        expect(res.text).not.toContain('unpkg.com');
+    });
+
+    test('serves the bundled Leaflet stylesheet as static file', async () => {
+        // /dist/map.css is the esbuild emit of the `import 'leaflet/dist/
+        // leaflet.css'` in frontend/map.ts.
+        const app = createApp();
+        const res = await request(app).get('/dist/map.css');
+
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toMatch(/css/);
     });
 
     test('map.html contains info toggle button and panel', async () => {

@@ -31,8 +31,8 @@ export function createApp(collections?: ApiCollections, pgPool?: pg.Pool): expre
         contentSecurityPolicy: {
             directives: {
                 defaultSrc: ["'self'"],
-                scriptSrc: ["'self'", "unpkg.com"],
-                styleSrc: ["'self'", "unpkg.com", "'unsafe-inline'"],
+                scriptSrc: ["'self'"],
+                styleSrc: ["'self'", "'unsafe-inline'"],
                 imgSrc: [
                     "'self'",
                     "data:",

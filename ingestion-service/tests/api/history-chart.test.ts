@@ -13,15 +13,23 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
  * sum(pct * count) / sum(count) computed from the raw API points.
  */
 
-// Mock Chart.js globally — we're testing the module's integration, not Chart itself.
-const mockDestroy = vi.fn();
-const mockChartConstructor = vi.fn(function (this: any) {
-    this.destroy = mockDestroy;
+// Mock the Chart.js module — we're testing the module's integration, not
+// Chart itself. history-chart.ts imports Chart from npm now (bundled by
+// esbuild), so vi.mock replaces the module instead of a global. The mock
+// lives in vi.hoisted so it survives vi.resetModules() per test.
+const { mockChartConstructor, mockDestroy } = vi.hoisted(() => {
+    const mockDestroy = vi.fn();
+    const mockChartConstructor = vi.fn(function (this: any) {
+        this.destroy = mockDestroy;
+    });
+    return { mockChartConstructor, mockDestroy };
 });
+
+vi.mock('chart.js', () => ({ Chart: mockChartConstructor }));
+vi.mock('chart.js/auto', () => ({}));
 
 beforeEach(() => {
     vi.resetModules();
-    vi.stubGlobal('Chart', mockChartConstructor);
     mockDestroy.mockClear();
     mockChartConstructor.mockClear();
     // Set up a canvas element in the DOM with a mocked getContext
@@ -31,7 +39,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    vi.unstubAllGlobals();
     document.body.innerHTML = '';
 });
 

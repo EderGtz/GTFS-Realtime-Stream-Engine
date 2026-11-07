@@ -31,26 +31,37 @@ function createMarkerMock() {
     return m;
 }
 
-let lastPolylineMock = null;
+// map-logic.ts imports Leaflet from npm (bundled by esbuild), so the mock
+// replaces the MODULE instead of a global. vi.hoisted builds it before the
+// hoisted vi.mock registration runs; `L` here is the same object the module
+// under test receives.
 
-beforeEach(() => {
-    // Minimal Leaflet global — just enough for the functions under test
-    globalThis.L = {
+const { L } = vi.hoisted(() => {
+    // Minimal Leaflet module — just enough for the functions under test.
+    const L = {
         circleMarker: vi.fn(() => createMarkerMock()),
         polyline: vi.fn(() => {
             const m = createMarkerMock();
             m.setLatLng = vi.fn().mockReturnThis();
             // Give it a prototype chain so instanceof L.Polyline works
             Object.setPrototypeOf(m, L.Polyline.prototype);
-            lastPolylineMock = m;
             return m;
         }),
         Polyline: class Polyline {},
         Polygon: class Polygon {},
     };
+    return { L };
 });
 
-// ── Import after global mock is set up ────────────────────────────────
+vi.mock('leaflet', () => L);
+
+beforeEach(() => {
+    // The module mock is shared across tests — zero the call history so the
+    // per-test call-count assertions start from 0 (implementations stay).
+    vi.clearAllMocks();
+});
+
+// ── Import after the module mock is set up ────────────────────────────
 
 const mod = await import('../../frontend/map-logic.ts');
 const { fetchLiveData } = await import('../../frontend/lib/api.ts');

@@ -6,12 +6,10 @@
  * File dynamic:
  *   - Leaflet map + tile layer + the two overlay layers
  *   - 30s refresh loop (fetch live data -> rebuild markers -> stats)
+ *
  */
-
-// Bring the CDN global (L) into scope even when this file is type-checked
-// outside frontend/tsconfig.json (editor "inferred projects", one-off tsc
-// runs). Same declarations the project include provides; duplicate-safe.
-/// <reference path="./globals.d.ts" />
+import * as L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 import {
     REFRESH_INTERVAL_MS,
