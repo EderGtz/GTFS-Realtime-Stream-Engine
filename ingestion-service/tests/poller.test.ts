@@ -9,6 +9,7 @@ vi.mock("../src/config.js", () => ({
     config: {
         mbta: { vehiclePositionsUrl: "https://fake.test/VehiclePositions.pb" },
         kafka: { brokers: ["fake-broker:9092"], topic: "raw.vehicle-positions", numPartitions: 4 },
+        healthcheck: { pingUrl: "" },
     },
 }));
 
@@ -239,4 +240,63 @@ describe("computeWaitMs", () => {
         );
     });
 
+ });
+
+ describe("pollVehiclePositions (dead-man's-switch heartbeat)", () => {
+    function fakeHealthcheck() {
+        return { ok: vi.fn(), fail: vi.fn() };
+    }
+
+    test("pings ok after every successful cycle", async () => {
+        (setupKafka as any).mockResolvedValue(undefined);
+        const hc = fakeHealthcheck();
+        const mockPoll = vi.fn().mockResolvedValue(undefined);
+        (wait as any).mockRejectedValueOnce(new Error("STOP_LOOP"));
+
+        await expect(poller.pollVehiclePositions(mockPoll, hc)).rejects.toThrow("STOP_LOOP");
+
+        expect(hc.ok).toHaveBeenCalledTimes(1);
+        expect(hc.fail).not.toHaveBeenCalled();
+    });
+
+    test("pings fail at the alert threshold — the fatal log alone goes nowhere", async () => {
+        (setupKafka as any).mockResolvedValue(undefined);
+        const hc = fakeHealthcheck();
+        const mockPoll = vi.fn().mockRejectedValue(new Error("feed down"));
+
+        let waitCalls = 0;
+        (wait as any).mockImplementation(() => {
+            waitCalls++;
+            if (waitCalls >= 6) throw new Error("STOP_LOOP");
+            return Promise.resolve();
+        });
+
+        await expect(poller.pollVehiclePositions(mockPoll, hc)).rejects.toThrow("STOP_LOOP");
+
+        expect(hc.ok).not.toHaveBeenCalled();
+        // Cycles 5 and 6 are at/over ALERT_THRESHOLD — one fail ping each,
+        // mirroring logger.fatal's cadence.
+        expect(hc.fail).toHaveBeenCalledTimes(2);
+    });
+
+    test("resumes ok pings after recovery", async () => {
+        (setupKafka as any).mockResolvedValue(undefined);
+        const hc = fakeHealthcheck();
+        const mockPoll = vi.fn()
+            .mockRejectedValueOnce(new Error("fail 1"))
+            .mockRejectedValueOnce(new Error("fail 2"))
+            .mockResolvedValue(undefined);
+
+        let waitCalls = 0;
+        (wait as any).mockImplementation(() => {
+            waitCalls++;
+            if (waitCalls >= 3) throw new Error("STOP_LOOP");
+            return Promise.resolve();
+        });
+
+        await expect(poller.pollVehiclePositions(mockPoll, hc)).rejects.toThrow("STOP_LOOP");
+
+        expect(hc.fail).not.toHaveBeenCalled();
+        expect(hc.ok).toHaveBeenCalledTimes(1); // only the third cycle succeeded
+    });
  });

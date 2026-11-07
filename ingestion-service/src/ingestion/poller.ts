@@ -4,6 +4,7 @@ import { decodeFeedMessage } from './decoder.js';
 import { vehiclesWithValidTelemetries } from './validator.js';
 import { wait } from '../utils/requestWithRetry.js'
 import { logger } from '../utils/logger.js';
+import { createHealthcheck, type Healthcheck } from '../utils/healthcheck.js';
 import { setupKafka, publishTelemetries } from './producer.js';
 
 export async function fetchFeedBuffer(): Promise<ArrayBuffer> {
@@ -51,7 +52,8 @@ export function computeWaitMs(consecutiveFailures: number): number {
 }
 
 export async function pollVehiclePositions(
-    poll: () => Promise<void> = pollCycle
+    poll: () => Promise<void> = pollCycle,
+    healthcheck: Healthcheck = createHealthcheck(config.healthcheck.pingUrl)
 ) {
     logger.info("Starting vehicles polling");
     await setupKafka(); // connects producer + ensures topic exists, once, before the loop
@@ -60,11 +62,14 @@ export async function pollVehiclePositions(
     while (true) {
         try {
             await poll();
-
             if (consecutiveFailures === ALERT_THRESHOLD) {
                 logger.warn("MBTA feed recovered after sustained failure.");
             }
             consecutiveFailures = 0;
+            //  dead-man's-switch ping per successful cycle — if
+            // these stop arriving, Healthchecks.io alerts on its own. Never
+            // awaited: a slow ping must not delay the next poll.
+            healthcheck.ok();
 
         } catch (error) {
             consecutiveFailures++;
@@ -77,6 +82,10 @@ export async function pollVehiclePositions(
                 logger.fatal(
                     "ALERT: MBTA feed has failed 5 consecutive times. Manual intervention may be required."
                 );
+                // logger.fatal alone goes nowhere outside these logs;
+                // the /fail ping raises the alert immediately instead of
+                // waiting for the pings to stop.
+                healthcheck.fail();
             }
         }
         await wait(computeWaitMs(consecutiveFailures));

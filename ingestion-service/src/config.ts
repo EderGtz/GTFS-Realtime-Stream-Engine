@@ -32,6 +32,10 @@ export const config = {
     pg: {
         dsn: envOrThrow("PG_DSN"),
     },
+    healthcheck: {
+        // Empty string disables the heartbeat
+        pingUrl: envOrDefault("HEALTHCHECKS_PING_URL", ""),
+    },
     api: {
         port: parseInt(envOrDefault("API_PORT", "3000"), 10),
     },
