@@ -277,7 +277,7 @@ class _DeviationResultTracker:
 
 def _window_last_message_at(pings: pd.DataFrame) -> datetime | None:
     """
-    UTC timestamp of the newest ping in the window. None when the frame carries 
+    UTC timestamp of the newest ping in the window. None when the frame carries
     no parseable timestamps -- honest "unknown", never a fake now().
     """
     if "timestamp" not in pings.columns:

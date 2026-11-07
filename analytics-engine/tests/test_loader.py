@@ -874,7 +874,7 @@ class TestTripTerminalLookup:
 
 
 class TestLoadMetadata:
-    """ : loaded_at/version feed GET /v1/pipeline/status ('last static
+    """: loaded_at/version feed GET /v1/pipeline/status ('last static
     reload') and the analytics pipeline_status document."""
 
     def test_loaded_at_and_version_set_on_load(self, gtfs_dir):

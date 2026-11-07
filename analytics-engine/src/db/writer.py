@@ -196,7 +196,7 @@ def build_pipeline_status_document(
     now: datetime,
 ) -> dict:
     """
-    hape the single pipeline_status document from one window's WindowResult plus 
+    hape the single pipeline_status document from one window's WindowResult plus
     the alerter's running totals. The API's GET /v1/pipeline/status projects this document;
     `reported_at` is what lets a reader tell "stale doc" (analytics engine
     stopped) from "fresh doc reporting bad numbers".

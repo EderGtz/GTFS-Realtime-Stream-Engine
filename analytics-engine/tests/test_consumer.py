@@ -1213,7 +1213,7 @@ class TestPersistBackoff:
 
 
 class TestWindowObservability:
-    """  (hardening pass): the   counter and the pipeline snapshot ride
+    """(hardening pass): the   counter and the pipeline snapshot ride
     on every WindowResult so /v1/pipeline/status and the data-level alerts can
     read them without reaching back into the running consumer."""
 

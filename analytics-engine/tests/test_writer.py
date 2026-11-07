@@ -653,7 +653,7 @@ class TestBuildDeviationWithRouteEnrichment:
 
 
 class TestPipelineStatus:
-    """ : the single pipeline_status document behind GET /v1/pipeline/status
+    """: the single pipeline_status document behind GET /v1/pipeline/status
     and the write/count helpers the alerts use."""
 
     NOW = datetime(2026, 11, 5, 12, 1, tzinfo=UTC)

@@ -318,7 +318,7 @@ class TestComputeDepartureDeviations:
 
 
 class TestMatchingStats:
-    """  per-window ping-matching counter (hardening-pass  )."""
+    """per-window ping-matching counter (hardening-pass  )."""
 
     @staticmethod
     def _lookup() -> dict[tuple[str, int], ScheduledStopTime]:
