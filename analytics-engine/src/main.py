@@ -40,11 +40,16 @@ import threading
 import time
 from pathlib import Path
 
+from alerting import DataQualityAlerter, HealthcheckNotifier
 from config import AppConfig
 from consumer import AnalyticsConsumer, WindowResult, download_and_extract_gtfs
 from db.pg_schema import HourlyStats
 from db.pg_writer import HourlyAccumulator, PgWriter
-from db.writer import MetricsWriter, PersistWindowResult
+from db.writer import (
+    MetricsWriter,
+    PersistWindowResult,
+    build_pipeline_status_document,
+)
 from utils.logger import get_logger
 
 logger = get_logger("analytics-engine.main")
@@ -81,6 +86,16 @@ def main() -> None:
     writer = MetricsWriter(mongo_uri=config.mongo_uri)
     pg_writer = PgWriter(dsn=config.pg_dsn)
     accumulator = HourlyAccumulator()
+
+    # data-level alerts + the pipeline_status heartbeat behind
+    # GET /v1/pipeline/status. The poller's dead-man's switch lives in the
+    # ingestion service; these rules watch the DATA instead -- on Nov 1-2 2026
+    # the poller stayed healthy while the matching stage silently dropped
+    # nearly everything. See alerting.py for the rule design.
+    alerter = DataQualityAlerter(
+        notifier=HealthcheckNotifier(config.healthcheck_data_url),
+        deviation_count_between=writer.count_deviations_between,
+    )
 
     # Postgres is the historical-stats side store: a failure there must not
     # kill the consumer or block offset commits (Mongo is the live-state store).
@@ -144,6 +159,21 @@ def main() -> None:
             result.total_records,
             persist_window_result["bunching_written"],
             persist_window_result["deviations_written"],
+        )
+
+        # evaluate the data-level alerts (  matched ratio + weekly
+        # deviation volume) and refresh the pipeline_status document behind
+        # GET /v1/pipeline/status. Both are cheap and failure-contained inside
+        # the alerter/writer -- they must never block the persist path above.
+        now = datetime.datetime.now(datetime.UTC)
+        alerter.observe_window(result.matching, now)
+        writer.write_pipeline_status(
+            build_pipeline_status_document(
+                result,
+                cumulative_matching=alerter.cumulative_matching,
+                active_alerts=alerter.active_alerts(),
+                now=now,
+            )
         )
 
         # Feed into the hourly accumulator for PostgreSQL.
