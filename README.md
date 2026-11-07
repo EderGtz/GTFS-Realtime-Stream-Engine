@@ -148,7 +148,7 @@ Python Kafka consumer that loads GTFS-static schedules, joins real-time pings ag
 
 ### Phase 4 — Serving API
 
-Express API exposing `GET /v1/status/live` — current delays, bunching events, and metadata. Helmet security headers, CORS, rate limiting, error sanitization. Separate entry point from the poller with independent lifecycle.
+Express API exposing `GET /v1/status/live` — current delays, bunching events, and metadata — and `GET /v1/pipeline/status`, which answers "how would you know if it broke?" in one curl: last message age, Kafka consumer lag, last GTFS-static reload, the ping-matching counters, and any data-level alerts currently firing. Helmet security headers, CORS, rate limiting, error sanitization. Separate entry point from the poller with independent lifecycle.
 
 ![Phase 4 Live API Demo](docs/img/phase4_demo.gif)
 
@@ -160,7 +160,7 @@ Leaflet map showing deviation markers (color-coded by severity) and bunching eve
 
 ### Phase 6 — Production Deployment
 
-Deployed on Hetzner CX23 via Docker Compose. Three Dockerfiles with multi-stage builds. MongoDB pinned to 7.0 (kernel 6.19 compat). Resource limits: Kafka 256MB heap, MongoDB 256MB cache. UFW firewall. Running unattended since 2026-09-25.
+Deployed on Hetzner CX23 via Docker Compose. Three Dockerfiles with multi-stage builds. MongoDB pinned to 7.0 (kernel 6.19 compat). Resource limits: Kafka 256MB heap, MongoDB 256MB cache. UFW firewall. Running unattended since 2026-09-25. Observability is layered: a Healthchecks.io dead-man's switch on the poller (one ping per successful cycle — silence is the alarm) plus data-level alerts on matched-ping ratio (below 50% for 30 minutes) and hourly deviation volume vs the same hour last week, which is what would have caught the Nov 2026 matching-stage incident that a poller-only heartbeat missed.
 
 Full runbook: [`docs/phase6-deployment-guide.md`](docs/phase6-deployment-guide.md)
 
