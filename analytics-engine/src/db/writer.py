@@ -48,6 +48,8 @@ clustering (Future Work) needs it.
 from __future__ import annotations
 
 import time
+from dataclasses import asdict
+from datetime import datetime
 from typing import TYPE_CHECKING, TypedDict
 
 from pymongo import ASCENDING, DESCENDING, MongoClient, UpdateOne
@@ -55,7 +57,7 @@ from pymongo.collection import Collection
 from pymongo.errors import PyMongoError
 
 from metrics.bunching import BunchingEvent
-from metrics.schedule_deviation import DeviationResult
+from metrics.schedule_deviation import DeviationResult, MatchingStats
 from utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -65,6 +67,11 @@ logger = get_logger("analytics-engine.writer")
 
 BUNCHING_COLLECTION = "bunching_events"
 DEVIATION_COLLECTION = "schedule_deviations"
+# single-document heartbeat of the analytics pipeline itself,
+# read by the API's GET /v1/pipeline/status. Single doc (fixed _id), upserted
+# per window -- it reports CURRENT state, so history would only add TTL churn.
+PIPELINE_STATUS_COLLECTION = "pipeline_status"
+PIPELINE_STATUS_DOC_ID = "pipeline_status"
 
 
 def _connect_with_retry(
@@ -178,6 +185,41 @@ def build_deviation_operations(results: list[DeviationResult]) -> list[UpdateOne
     return operations
 
 
+def _matching_document(stats: MatchingStats) -> dict:
+    return {**asdict(stats), "matched_ratio": stats.matched_ratio}
+
+
+def build_pipeline_status_document(
+    result: WindowResult,
+    cumulative_matching: MatchingStats,
+    active_alerts: list[str],
+    now: datetime,
+) -> dict:
+    """
+    hape the single pipeline_status document from one window's WindowResult plus 
+    the alerter's running totals. The API's GET /v1/pipeline/status projects this document;
+    `reported_at` is what lets a reader tell "stale doc" (analytics engine
+    stopped) from "fresh doc reporting bad numbers".
+    """
+    doc: dict = {
+        "_id": PIPELINE_STATUS_DOC_ID,
+        "reported_at": now,
+        "window_total_records": result.total_records,
+        "alerts": active_alerts,
+    }
+    if result.pipeline is not None:
+        doc["last_message_at"] = result.pipeline.last_message_at
+        doc["consumer_lag_messages"] = result.pipeline.consumer_lag_messages
+        doc["last_static_reload_at"] = result.pipeline.last_static_reload_at
+        doc["static_bundle_version"] = result.pipeline.static_bundle_version
+    if result.matching is not None:
+        doc["matching"] = {
+            "last_window": _matching_document(result.matching),
+            "cumulative": _matching_document(cumulative_matching),
+        }
+    return doc
+
+
 class PersistWindowResult(TypedDict):
     bunching_written: int
     deviations_written: int
@@ -204,7 +246,9 @@ class MetricsWriter:
 
         self.bunching_collection: Collection = self.db[BUNCHING_COLLECTION]
         self.deviation_collection: Collection = self.db[DEVIATION_COLLECTION]
-
+        self.pipeline_status_collection: Collection = self.db[
+            PIPELINE_STATUS_COLLECTION
+        ]
         self._ensure_indexes()
 
     def _ensure_indexes(self) -> None:
@@ -330,6 +374,32 @@ class MetricsWriter:
             "success": (bunching_written == bunching_total)
             and (deviation_written == deviation_total),
         }
+
+    def write_pipeline_status(self, doc: dict) -> bool:
+        """Upsert the single pipeline_status document. Failures are
+        logged and reported as False -- a stale status doc is itself a signal
+        (GET /v1/pipeline/status exposes its age) and must not disturb the
+        metrics write path."""
+        try:
+            self.pipeline_status_collection.replace_one(
+                {"_id": PIPELINE_STATUS_DOC_ID}, doc, upsert=True
+            )
+            return True
+        except PyMongoError:
+            logger.exception("Failed to write the pipeline_status document.")
+            return False
+
+    def count_deviations_between(self, start: datetime, end: datetime) -> int:
+        """Count deviation documents with actual_at in [start, end) -- backs the
+        weekly deviation-volume alert: the just-completed hour
+        vs the same hour seven days earlier. Served by the dev_time index.
+
+        Raises on database errors instead of returning 0: a fake 0 would make
+        the volume alert fire on an outage that has nothing to do with the
+        data."""
+        return self.deviation_collection.count_documents(
+            {"actual_at": {"$gte": start, "$lt": end}}
+        )
 
     def close(self) -> None:
         self.client.close()

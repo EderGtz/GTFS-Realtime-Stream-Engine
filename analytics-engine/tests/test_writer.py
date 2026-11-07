@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -5,14 +6,17 @@ import pytest
 from pymongo import ASCENDING, UpdateOne
 from pymongo.errors import PyMongoError
 
+from consumer import PipelineStats, WindowResult
 from db.writer import (
+    PIPELINE_STATUS_DOC_ID,
     MetricsWriter,
     _connect_with_retry,
     build_bunching_operations,
     build_deviation_operations,
+    build_pipeline_status_document,
 )
 from metrics.bunching import BunchingEvent
-from metrics.schedule_deviation import DeviationResult
+from metrics.schedule_deviation import DeviationResult, MatchingStats
 
 EASTERN = "America/New_York"
 
@@ -339,6 +343,7 @@ class TestPersistWindow:
         mock_collections = {
             "bunching_events": mock_bunching_col,
             "schedule_deviations": mock_deviation_col,
+            "pipeline_status": MagicMock(),
         }
         mock_db = MagicMock()
         mock_db.__getitem__ = lambda self, key: mock_collections[key]
@@ -645,3 +650,112 @@ class TestBuildDeviationWithRouteEnrichment:
         assert doc_with["route_long_name"] == "Red Line"
         assert "route_id" not in doc_without
         assert "route_long_name" not in doc_without
+
+
+class TestPipelineStatus:
+    """ : the single pipeline_status document behind GET /v1/pipeline/status
+    and the write/count helpers the alerts use."""
+
+    NOW = datetime(2026, 11, 5, 12, 1, tzinfo=UTC)
+
+    @staticmethod
+    def _window_result() -> WindowResult:
+        return WindowResult(
+            bunching_actions=[],
+            new_deviations=[],
+            total_records=42,
+            matching=MatchingStats(42, 40, 1, 1, gate_dropped_events=2),
+            pipeline=PipelineStats(
+                last_message_at=datetime(2026, 11, 5, 12, 0, tzinfo=UTC),
+                consumer_lag_messages=7,
+                last_static_reload_at=datetime(2026, 11, 5, 4, 0, tzinfo=UTC),
+                static_bundle_version="feed-v1",
+            ),
+        )
+
+    def test_builds_full_document(self):
+        cumulative = MatchingStats(400, 380, 10, 10, gate_dropped_events=5)
+
+        doc = build_pipeline_status_document(
+            self._window_result(),
+            cumulative_matching=cumulative,
+            active_alerts=["matched-ping ratio 4% below 50% for 30 min"],
+            now=self.NOW,
+        )
+
+        assert doc["_id"] == PIPELINE_STATUS_DOC_ID
+        assert doc["reported_at"] == self.NOW
+        assert doc["window_total_records"] == 42
+        assert doc["last_message_at"] == datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
+        assert doc["consumer_lag_messages"] == 7
+        assert doc["last_static_reload_at"] == datetime(2026, 11, 5, 4, 0, tzinfo=UTC)
+        assert doc["static_bundle_version"] == "feed-v1"
+        assert doc["alerts"] == ["matched-ping ratio 4% below 50% for 30 min"]
+
+        last_window = doc["matching"]["last_window"]
+        assert last_window["total_pings"] == 42
+        assert last_window["matched_pings"] == 40
+        assert last_window["missing_field_pings"] == 1
+        assert last_window["unmatched_pings"] == 1
+        assert last_window["gate_dropped_events"] == 2
+        assert last_window["matched_ratio"] == pytest.approx(40 / 42)
+        assert doc["matching"]["cumulative"]["matched_pings"] == 380
+
+    def test_builds_base_document_when_observability_fields_are_absent(self):
+        result = WindowResult(bunching_actions=[], new_deviations=[], total_records=0)
+
+        doc = build_pipeline_status_document(
+            result,
+            cumulative_matching=MatchingStats(0, 0, 0, 0),
+            active_alerts=[],
+            now=self.NOW,
+        )
+
+        assert "matching" not in doc
+        assert "last_message_at" not in doc
+        assert doc["alerts"] == []
+
+    @patch("db.writer._connect_with_retry")
+    def test_write_pipeline_status_upserts(self, mock_connect):
+        mock_client = MagicMock()
+        mock_connect.return_value = mock_client
+        writer = MetricsWriter(mongo_uri="mongodb://fake")
+        doc = {"_id": PIPELINE_STATUS_DOC_ID}
+
+        assert writer.write_pipeline_status(doc) is True
+
+        mock_client["gtfs_realtime"][
+            "pipeline_status"
+        ].replace_one.assert_called_once_with(
+            {"_id": PIPELINE_STATUS_DOC_ID}, doc, upsert=True
+        )
+
+    @patch("db.writer._connect_with_retry")
+    def test_write_pipeline_status_returns_false_on_pymongo_error(self, mock_connect):
+        mock_client = MagicMock()
+        mock_connect.return_value = mock_client
+        mock_client["gtfs_realtime"][
+            "pipeline_status"
+        ].replace_one.side_effect = PyMongoError("mongo down")
+        writer = MetricsWriter(mongo_uri="mongodb://fake")
+
+        assert writer.write_pipeline_status({"_id": PIPELINE_STATUS_DOC_ID}) is False
+
+    @patch("db.writer._connect_with_retry")
+    def test_count_deviations_between_uses_half_open_range(self, mock_connect):
+        mock_client = MagicMock()
+        mock_connect.return_value = mock_client
+        mock_client["gtfs_realtime"][
+            "schedule_deviations"
+        ].count_documents.return_value = 12
+        writer = MetricsWriter(mongo_uri="mongodb://fake")
+        start = datetime(2026, 11, 5, 10, 0, tzinfo=UTC)
+        end = start + timedelta(hours=1)
+
+        assert writer.count_deviations_between(start, end) == 12
+
+        mock_client["gtfs_realtime"][
+            "schedule_deviations"
+        ].count_documents.assert_called_once_with(
+            {"actual_at": {"$gte": start, "$lt": end}}
+        )
