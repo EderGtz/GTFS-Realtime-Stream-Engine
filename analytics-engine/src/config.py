@@ -16,6 +16,7 @@ class AppConfig:
     mongo_retry_max_seconds: float
     mongo_retry_jitter_seconds: float
     pg_dsn: str
+    healthcheck_data_url: str | None = None
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -35,6 +36,7 @@ class AppConfig:
                     os.getenv("MONGO_RETRY_JITTER_SECONDS", "1")
                 ),
                 pg_dsn=os.environ["PG_DSN"],
+                healthcheck_data_url=os.getenv("HEALTHCHECKS_DATA_URL") or None,
             )
         except KeyError as e:
             raise RuntimeError(f"Missing mandatory environment variable: {e}")
