@@ -76,7 +76,7 @@ It is relevant to mention that this phase **does not keep track** of duplicated 
 *Runs the Kafka round-trip integration test against the real broker. A test telemetry message is published through the production Kafka pipeline, consumed from raw.vehicle-positions, parsed as JSON, and validated against the expected schema.*
 
 ![Kafka round-trip integration test](img/phase2_kafkaUI.png)
-*Kafbat UI showing the raw.vehicle-positions Kafka topic populated with telemetry messages.*
+*Kafbat UI (run ad hoc while testing — not part of the deployed stack) showing the raw.vehicle-positions Kafka topic populated with telemetry messages.*
 
 ---
 

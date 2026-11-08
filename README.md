@@ -13,24 +13,26 @@ The pipeline itself is the core product. It runs continuously against live MBTA 
 
 ## Live Deployment
 
-The full stack is deployed on a Hetzner CX23 (2 vCPU, 4GB RAM, €4.49/mo) running seven containers via Docker Compose. The pipeline has been running unattended since 2026-09-25.
+The full stack is deployed on a Hetzner CX23 (2 vCPU, 4GB RAM, €4.49/mo) running eight containers via Docker Compose. The pipeline has been running unattended since 2026-09-25.
 
 **Access:**
 - Map: http://157.90.113.98:3000/map
 - API: http://157.90.113.98:3000/v1/status/live
 
-**Observed steady-state resource usage:**
+**Observed steady-state resource usage** (measured 2026-11-02):
 
-| Container     | RAM      | CPU    |
-|---------------|----------|--------|
-| analytics     | ~1.6 GB  | 0.13%  |
-| kafka         | ~460 MB  | 127%   |
-| kafkabat-ui   | ~370 MB  | 0.03%  |
-| mongodb       | ~370 MB  | 1.03%  |
-| ingestion     | ~65 MB   | 4.55%  |
-| api           | ~69 MB   | 0.14%  |
+| Container     | RAM (steady) | Limit / cap |
+|---------------|--------------|-------------|
+| analytics     | ~475 MB      | 2g `mem_limit` |
+| kafka         | ~485 MB      | 256 MB JVM heap |
+| mongodb       | ~680 MB      | 768 MB WiredTiger cache (0.75 GB) |
+| api           | ~55 MB       | — |
+| ingestion     | ~55 MB       | — |
+| archive-compactor | ~30 MB   | 256m `mem_limit` |
+| postgres      | ~25 MB       | — |
+| archive       | ~15 MB       | 256m `mem_limit` |
 
-Kafka's high CPU is expected — the JVM reports total CPU across all threads, not per-core usage. MongoDB's I/O reflects the 72-hour retention window and the upsert-heavy write pattern.
+About 1.8 GB of the 3.7 GB available to containers. The analytics engine's reload peak (~1.15 GB holding old and new lookups at once) is why its limit is 2g — see Known Limitations.
 
 For the full deployment runbook, see `docs/phase6-deployment-guide.md`.
 
@@ -160,7 +162,7 @@ Leaflet map showing deviation markers (color-coded by severity) and bunching eve
 
 ### Phase 6 — Production Deployment
 
-Deployed on Hetzner CX23 via Docker Compose. Three Dockerfiles with multi-stage builds. MongoDB pinned to 7.0 (kernel 6.19 compat). Resource limits: Kafka 256MB heap, MongoDB 256MB cache. UFW firewall. Running unattended since 2026-09-25. Observability is layered: a Healthchecks.io dead-man's switch on the poller (one ping per successful cycle — silence is the alarm) plus data-level alerts on matched-ping ratio (below 50% for 30 minutes) and hourly deviation volume vs the same hour last week, which is what would have caught the Nov 2026 matching-stage incident that a poller-only heartbeat missed.
+Deployed on Hetzner CX23 via Docker Compose. Five Dockerfiles with multi-stage builds. MongoDB pinned to 7.0 (kernel 6.19 compat). Resource limits: Kafka 256MB heap, MongoDB 768MB cache (0.75 GB). UFW firewall (its actual scope is documented in the runbook). Running unattended since 2026-09-25. Observability is layered: a Healthchecks.io dead-man's switch on the poller (one ping per successful cycle — silence is the alarm) plus data-level alerts on matched-ping ratio (below 50% for 30 minutes) and hourly deviation volume vs the same hour last week, which is what would have caught the Nov 2026 matching-stage incident that a poller-only heartbeat missed.
 
 Full runbook: [`docs/phase6-deployment-guide.md`](docs/phase6-deployment-guide.md)
 
@@ -248,7 +250,7 @@ If you just want to see the full stack running without touching terminals:
 docker compose up -d
 ```
 
-This starts all containers (Kafka, MongoDB, Kafbat UI, ingestion, API, analytics, archive). The map is at `http://localhost:3000/map` and the API at `http://localhost:3000/v1/status/live`.
+This starts all containers (Kafka, MongoDB, PostgreSQL, ingestion, API, analytics, archive, archive-compactor). The map is at `http://localhost:3000/map` and the API at `http://localhost:3000/v1/status/live`.
 
 **Important: after making code changes, the running containers will still be running the old code.** Docker images are built once at `up` time. If you edit source files and want the containers to pick up the changes, you must rebuild:
 

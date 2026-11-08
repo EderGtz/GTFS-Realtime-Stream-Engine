@@ -125,27 +125,29 @@ deploy — `npm run dev` uses `tsx` which bypasses the build entirely.
 
 ## 4. Resource Limits
 
-The CX23's 4GB must accommodate six containers plus the OS. Without
+The CX23's 4GB must accommodate eight containers plus the OS. Without
 explicit limits, Kafka's JVM defaults to ~1GB heap and MongoDB's
 WiredTiger cache defaults to ~50% of available RAM.
 
 | Component       | Limit           | Why                                                     |
 |-----------------|-----------------|---------------------------------------------------------|
 | Kafka JVM heap  | 256MB (`-Xmx`)  | Single-node, low-throughput topic; 1GB default is wasteful |
-| MongoDB cache   | 256MB           | Caps WiredTiger's memory footprint; sufficient for the document volume |
-| Analytics engine| ~1.6GB observed | pandas DataFrames for ~1000 pings/window; GC cleanup after each window prevents unbounded growth |
+| MongoDB cache   | 768MB (0.75 GB) | WiredTiger cache should cover the hottest working set (indexes + frequently-read documents); revisit when collection sizes change |
+| Analytics engine| 2g `mem_limit`  | ~475 MiB steady; a GTFS-static reload peaks ~1.15 GB holding old and new lookups at once (README Known Limitations) |
 
-**Observed steady-state memory** (after 33 hours):
+**Observed steady-state memory** (measured 2026-11-02):
 
 | Container     | RAM      |
 |---------------|----------|
-| analytics     | ~1.6 GB  |
-| kafka         | ~440 MB  |
-| kafkabat-ui   | ~370 MB  |
-| mongodb       | ~250 MB  |
-| ingestion     | ~65 MB   |
-| api           | ~64 MB   |
-| **Total**     | **~2.8 GB** (of 3.7 GB available) |
+| analytics     | ~475 MB  |
+| kafka         | ~485 MB  |
+| mongodb       | ~680 MB  |
+| api           | ~55 MB   |
+| ingestion     | ~55 MB   |
+| compactor     | ~30 MB   |
+| postgres      | ~25 MB   |
+| archive       | ~15 MB   |
+| **Total**     | **~1.8 GB** (of 3.7 GB available) |
 
 ---
 
@@ -175,8 +177,8 @@ naming convention).
 | Port  | Binding     | Access          | Reason                                    |
 |-------|-------------|-----------------|-------------------------------------------|
 | 27017 | `127.0.0.1` | localhost only  | MongoDB — no auth, must not face internet |
+| 5432  | `127.0.0.1` | localhost only  | PostgreSQL — same reasoning               |
 | 9092  | `127.0.0.1` | localhost only  | Kafka — same reasoning                    |
-| 8080  | `127.0.0.1` | SSH tunnel only | Kafka UI — diagnostic tool, not public    |
 | 3000  | `0.0.0.0`   | internet        | API + map;  the public-facing endpoint    |
 
 ### MongoDB version pinned to 7.0
@@ -265,24 +267,10 @@ docker compose logs --tail=50 analytics
 docker compose logs --tail=50 api
 ```
 
-### Kafka UI (via SSH tunnel)
-
-```bash
-# From local machine:
-ssh -L 8080:localhost:8080 deployer@157.90.113.98
-# Open http://localhost:8080
-```
-
 ### Disk cleanup
 
 ```bash
 docker system prune -f      # removes unused images, build cache
-```
-
-### Stopping Kafka UI to free ~370MB RAM
-
-```bash
-docker compose stop kafkabat-ui
 ```
 
 ---
@@ -296,6 +284,16 @@ sudo ufw allow 22/tcp       # SSH
 sudo ufw allow 3000/tcp     # API + Map
 sudo ufw enable
 ```
+
+**What UFW does and does not control here:** UFW does NOT filter
+Docker-published ports. Docker creates its own iptables NAT rules that
+bypass UFW's INPUT chain, so `ufw status` can show "3000 allowed" while
+that allowance is not what admits (or blocks) traffic to published
+containers. The real control is the port bindings in `docker-compose.yml`:
+infrastructure ports (MongoDB, PostgreSQL, Kafka) bind to `127.0.0.1` and
+only the API publishes `0.0.0.0:3000`. When adding a published port,
+choose its binding there — UFW still usefully covers SSH and any
+non-Docker services.
 
 ### helmet configuration
 
@@ -408,9 +406,10 @@ dmesg | grep -i oom
 docker stats --no-stream
 ```
 
-The 4GB CX23 has headroom. OOM would indicate an unexpected consumer
-(likely kafkabat-ui at 370MB). Stop it with `docker compose stop
-kafkabat-ui`.
+The 4GB CX23 has headroom (steady state ~1.8 GB — see Resource Limits).
+If an OOM does occur, `docker stats --no-stream` shows which container
+grew; the analytics engine's GTFS-static reload peak is the known large
+consumer.
 
 ---
 

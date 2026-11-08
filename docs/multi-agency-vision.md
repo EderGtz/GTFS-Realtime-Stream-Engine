@@ -293,8 +293,9 @@ appears:
   rather than application-managed credentials.
 - **Diagnostics** (consumer lag, per-agency ingestion rates) are served
   on a port bound to `127.0.0.1` and reached over SSH, the same way
-  Kafbat UI is today. Note that Docker-published ports bypass UFW, so
-  binding to localhost, not the firewall, is the effective control.
+  the MongoDB and Kafka ports are today. Note that Docker-published ports
+  bypass UFW, so binding to localhost, not the firewall, is the effective
+  control.
 
 JWT is one candidate for user sessions if a multi-user admin surface
 ever exists. It is not a decision.
