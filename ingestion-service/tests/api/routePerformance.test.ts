@@ -224,16 +224,31 @@ describe('GET /v1/routes/:id/performance', () => {
         expect(res.body.error).toBeDefined();
     });
 
-    test('returns 400 for route ID with special characters', async () => {
+    // Route-ID validation: bounds, not a charset whitelist. GTFS allows
+    // underscores, dots and spaces; both queries are parameterized (Mongo
+    // filter values), so odd characters are treated as opaque IDs.
+    test('treats special characters in route IDs as an opaque ID', async () => {
         const app = appWithAggregations(seededDeviationResult, seededBunchingResult);
         const res = await request(app).get('/v1/routes/$injection/performance');
+        expect(res.status).toBe(200);
+    });
+
+    test('accepts route IDs with spaces (GTFS allows them)', async () => {
+        const app = appWithAggregations(seededDeviationResult, seededBunchingResult);
+        const res = await request(app).get('/v1/routes/route 28/performance');
+        expect(res.status).toBe(200);
+    });
+
+    test('returns 400 for route IDs over the length bound', async () => {
+        const app = appWithAggregations(seededDeviationResult, seededBunchingResult);
+        const res = await request(app).get(`/v1/routes/${'a'.repeat(65)}/performance`);
         expect(res.status).toBe(400);
         expect(res.body.error).toBe('Invalid route ID format');
     });
 
-    test('returns 400 for route ID with spaces', async () => {
+    test('returns 400 for route IDs with control characters', async () => {
         const app = appWithAggregations(seededDeviationResult, seededBunchingResult);
-        const res = await request(app).get('/v1/routes/route 28/performance');
+        const res = await request(app).get('/v1/routes/a%0Ab/performance');
         expect(res.status).toBe(400);
     });
 

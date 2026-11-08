@@ -65,11 +65,35 @@ describe('GET /v1/routes/:id/history', () => {
         expect(res.body.data_points).toEqual([]);
     });
 
-    test('rejects invalid route ID format', async () => {
-        const { pool } = makeMockPool();
+    // Route-ID validation: bounds, not a charset whitelist. GTFS allows
+    // underscores, dots and spaces; the query is parameterized ($1), so odd
+    // characters are treated as opaque IDs, never SQL syntax.
+    test('treats special characters in route IDs as an opaque ID', async () => {
+        const { pool, queryMock } = makeMockPool();
         const app = makeApp(pool);
 
         const res = await request(app).get('/v1/routes/<script>/history');
+
+        expect(res.status).toBe(200);
+        expect(res.body.route_id).toBe('<script>');
+        // Bound as a parameter value — never interpolated into the SQL.
+        expect(queryMock.mock.calls[0]?.[1]?.[0]).toBe('<script>');
+    });
+
+    test('returns 400 for route IDs over the length bound', async () => {
+        const { pool } = makeMockPool();
+        const app = makeApp(pool);
+
+        const res = await request(app).get(`/v1/routes/${'a'.repeat(65)}/history`);
+
+        expect(res.status).toBe(400);
+    });
+
+    test('returns 400 for route IDs with control characters', async () => {
+        const { pool } = makeMockPool();
+        const app = makeApp(pool);
+
+        const res = await request(app).get('/v1/routes/a%0Ab/history');
 
         expect(res.status).toBe(400);
     });

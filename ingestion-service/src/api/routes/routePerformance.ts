@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { ApiCollections } from '../../db/connection.js';
 import type { RoutePerformanceResponse, RouteDeviationStats, RouteBunchingStats } from '../types.js';
+import { isValidRouteId } from '../validation.js';
 import { logger } from '../../utils/logger.js';
 
 /**
@@ -51,10 +52,7 @@ export function createRoutePerformanceRouter(collections: ApiCollections): Route
         try {
             const routeId = req.params.id;
 
-            // only allow alphanumeric route IDs (e.g. "28", "Red", "Green-D").
-            const VALID_ROUTE_ID = /^[A-Za-z0-9-]+$/;
-            
-            if (!routeId || !VALID_ROUTE_ID.test(routeId)) {
+            if (!isValidRouteId(routeId)) {
                 res.status(400).json({ error: 'Invalid route ID format' });
                 return;
             }
