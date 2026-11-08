@@ -56,8 +56,16 @@ def download_and_extract_gtfs(
     # previous bundle is parked at *.old and must never be lost to a stray
     # restart mid-swap.
     old_path = target_path.parent / f"{target_path.name}.old"
-    if not target_path.exists() and old_path.exists():
-        old_path.rename(target_path)
+    # Recovery covers both "target missing" and "target incomplete" (a crash
+    # mid-copy during the EXDEV fallback of the swap below). An incomplete
+    # target must never be trusted — the parked previous bundle wins.
+    target_incomplete = target_path.exists() and any(
+        not (target_path / fn).exists() for fn in _REQUIRED_FILES
+    )
+    if (not target_path.exists() or target_incomplete) and old_path.exists():
+        if target_path.exists():
+            shutil.rmtree(target_path)
+        shutil.move(str(old_path), str(target_path))
 
     try:
         remote_etag, remote_last_modified = _fetch_validators()
@@ -151,11 +159,19 @@ def _read_validator(target_path: Path, name: str) -> str | None:
 
 def _swap_into_place(contents: Path, target_path: Path, old_path: Path) -> None:
     """Move a fully-extracted bundle into place, keeping the previous one
-    recoverable until the swap has completed."""
+    recoverable until the swap has completed.
+
+    shutil.move, not Path.rename: the first install renames the image-baked
+    target dir, which lives in overlayfs's lower layer, and rename() there
+    fails with EXDEV (measured 2026-11-04 — crash-looped the consumer).
+    shutil.move falls back to copy+delete on EXDEV. On that fallback the copy
+    is not atomic, so download_and_extract_gtfs recovers an incomplete target
+    from *.old on the next start.
+    """
     if old_path.exists():
         shutil.rmtree(old_path)
     if target_path.exists():
-        target_path.rename(old_path)
-    contents.rename(target_path)
+        shutil.move(str(target_path), str(old_path))
+    shutil.move(str(contents), str(target_path))
     if old_path.exists():
         shutil.rmtree(old_path)

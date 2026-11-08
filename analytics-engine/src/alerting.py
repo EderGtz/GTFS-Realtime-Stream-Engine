@@ -189,9 +189,7 @@ class DataQualityAlerter:
         if len(trailing) < MIN_RATIO_SAMPLES:
             return  # not enough information to judge; leave state untouched
 
-        # Coverage: the window is only "30 minutes sustained" when the oldest
-        # trailing sample reaches back to the window's start.
-        if now - trailing[0][0] < timedelta(minutes=self.ratio_window_minutes):
+        if self._ratio_samples[0][0] > cutoff:
             return
 
         total = sum(total for _, _, total in trailing)

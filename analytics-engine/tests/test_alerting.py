@@ -103,6 +103,36 @@ class TestMatchedRatioRule:
         assert calls[-1][0] == PING_URL + "/fail"
         assert "matched-ping ratio" in calls[-1][1]
 
+    def test_fires_with_realistic_window_cadence(self):
+        """Regression: coverage must hold at real production cadence.
+
+        Windows evaluate once per ~60s at arbitrary sub-second offsets
+        (datetime.now()), so the oldest in-window sample is always slightly
+        YOUNGER than the 30-minute cutoff. The old coverage check demanded
+        the oldest trailing sample be >= 30 min old while the cutoff kept
+        only samples <= 30 min old -- satisfied solely by an exact-boundary
+        timestamp like the one the test above hand-crafts, and never in
+        production (2026-11-08 healthcheck drill: 35 min pinned at 0%
+        matched, no alert)."""
+        notifier, calls = recording_notifier()
+        alerter = DataQualityAlerter(notifier, deviation_count_between=lambda s, e: 0)
+
+        jitter_seconds = [61.2, 62.9, 60.7, 63.1, 61.8]  # real flush cadence
+        t = BASE + timedelta(seconds=0.318)
+
+        for i in range(20):  # ~20 min of history: not yet sustained
+            alerter.observe_window(ms(100, 0), t)
+            t += timedelta(seconds=jitter_seconds[i % 5])
+        assert alerter.active_alerts() == []  # < 30 min of history
+
+        for i in range(12):  # -> ~32 min total, no boundary alignment
+            alerter.observe_window(ms(100, 0), t)
+            t += timedelta(seconds=jitter_seconds[i % 5])
+
+        assert len(alerter.active_alerts()) == 1
+        assert "matched-ping ratio" in alerter.active_alerts()[0]
+        assert calls[-1][0] == PING_URL + "/fail"
+
     def test_fires_on_the_spec_threshold_boundary_only_below(self):
         """Exactly 50% is NOT 'below 50%'."""
         notifier, calls = recording_notifier()
