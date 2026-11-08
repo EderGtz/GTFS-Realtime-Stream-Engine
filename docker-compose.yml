@@ -99,6 +99,10 @@ services:
       dockerfile: Dockerfile
     container_name: gtfs_ingestion
     restart: unless-stopped
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       <<: *common-env
       # Healthchecks.io dead-man's-switch ping URL. Empty disables the heartbeat.
@@ -115,6 +119,10 @@ services:
       dockerfile: Dockerfile.api
     container_name: gtfs_api
     restart: unless-stopped
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs:
+      - /tmp
     ports:
       - "0.0.0.0:3000:3000"
     environment:
@@ -143,6 +151,7 @@ services:
     # service-date reload now runs daily. Columnar lookups are the long-term
     # fix — see README's Known Limitations.
     mem_limit: 2g
+    cap_drop: [ALL]
     environment:
       <<: *common-env
       KAFKA_BROKERS: kafka:29092
@@ -171,6 +180,10 @@ services:
     container_name: gtfs_archive
     restart: unless-stopped
     mem_limit: 256m
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       KAFKA_BROKERS: kafka:29092
       KAFKA_TOPIC: raw.vehicle-positions
@@ -197,6 +210,12 @@ services:
     container_name: gtfs_archive_compactor
     restart: unless-stopped
     mem_limit: 256m
+    # M5: no capabilities, read-only root FS — compacted parquet goes to the
+    # bind mount (exempt from read_only) and scratch to tmpfs /tmp.
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       ARCHIVE_DIR: /data/archive
       COMPACT_MIN_AGE_HOURS: "48"

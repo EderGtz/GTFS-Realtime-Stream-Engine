@@ -9,7 +9,6 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src/ ./src/
 RUN uv sync --frozen --no-dev
+ENV UV_CACHE_DIR=/tmp/uv-cache
 
-# Default to the daily loop; `--once` is passed via a compose command override or
-# `docker compose run archive-compactor --once`.
-CMD ["uv", "run", "--no-dev", "python3", "-m", "src.main"]
+CMD ["uv", "run", "--no-dev", "--no-sync", "python3", "-m", "src.main"]

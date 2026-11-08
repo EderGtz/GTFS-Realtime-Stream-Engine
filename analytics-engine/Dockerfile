@@ -15,6 +15,10 @@ COPY src/ ./src/
 COPY README.md ./
 RUN uv sync --frozen --no-dev
 
-RUN mkdir -p data/MBTA_GTFS
+RUN useradd --no-create-home --uid 10001 app \
+    && chown -R app:app /app
+ENV UV_CACHE_DIR=/tmp/uv-cache
 
-CMD ["uv", "run", "--no-dev", "python3", "-m", "src.main"]
+USER app
+
+CMD ["uv", "run", "--no-dev", "--no-sync", "python3", "-m", "src.main"]
