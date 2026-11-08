@@ -25,12 +25,17 @@ export const config = {
         topic: "raw.vehicle-positions",
         numPartitions: 4,
     },
-    mongo: {
-        uri: envOrThrow("MONGO_URI"),
-        database: envOrDefault("MONGO_DATABASE", "gtfs_realtime"),
+    // FUTURE FIX: split config per entry point instead of growing the getters.
+    get mongo() {
+        return {
+            uri: envOrThrow("MONGO_URI"),
+            database: envOrDefault("MONGO_DATABASE", "gtfs_realtime"),
+        };
     },
-    pg: {
-        dsn: envOrThrow("PG_DSN"),
+    get pg() {
+        return {
+            dsn: envOrThrow("PG_DSN"),
+        };
     },
     healthcheck: {
         // Empty string disables the heartbeat
