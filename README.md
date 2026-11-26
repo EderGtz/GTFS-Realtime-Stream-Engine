@@ -1,9 +1,27 @@
 # GTFS Realtime Stream Engine
 
-> **Naming:** this repository (`Public-Transport-Telemetry`) contains the
-> *GTFS Realtime Stream Engine* (production checkout: `GTFS-Realtime-Stream-Engine`).
+> **Status: complete (closed 2026-11-24).** This project is finished and kept
+> online as a live demo; no further development is planned.
+>
+> - **Built the full event-driven pipeline, end to end:** raw GTFS-Realtime
+>   ingestion → Kafka → Python analytics (schedule deviation + bunching) →
+>   MongoDB/PostgreSQL → Express API + Leaflet map. Six layers, all custom code.
+> - **Ran 60 days in production** (2026-09-25 → 2026-11-24) on a single
+>   €4.49/mo Hetzner VPS with nobody watching it: ~2.7M vehicle pings/day,
+>   ≈160M processed in total, and the last hands-on fix was 2026-11-13 —
+>   the final 11 days ran untouched.
+> - **Operated it like production:** 19 incident postmortems, a
+>   dead-man's-switch heartbeat plus data-level alerting, and a two-tier
+>   archive (NDJSON.gz → verified zstd Parquet, with retention) that preserves
+>   94M+ pings verbatim.
+> - **Closed every open item at shutdown** — route-ID lookup, search UX,
+>   Parquet retention, swallowed prod logs. See [`docs/incidents/`](docs/incidents/README.md)
+>   for the full history and [`docs/retrospective.md`](docs/retrospective.md)
+>   for the write-up.
+>
+> The demo stays reachable at http://157.90.113.98:3000/map while the server runs.
 
-An event-driven pipeline that ingests, processes, and analyzes public transit telemetry. Deployed and running live at `http://157.90.113.98:3000/map`.
+An event-driven pipeline that ingests, processes, and analyzes public transit telemetry. Deployed and running live at `http://157.90.113.98:3000/map`. The GitHub repository is named `Public-Transport-Telemetry`; this README consistently calls the project itself the *GTFS Realtime Stream Engine*.
 
 ## Why This Project Exists
 
@@ -13,7 +31,7 @@ The pipeline itself is the core product. It runs continuously against live MBTA 
 
 ## Live Deployment
 
-The full stack is deployed on a Hetzner CX23 (2 vCPU, 4GB RAM, €4.49/mo) running eight containers via Docker Compose. The pipeline has been running unattended since 2026-09-25.
+The full stack is deployed on a Hetzner CX23 (2 vCPU, 4GB RAM, €4.49/mo) running eight containers via Docker Compose — the five app containers built from this repo's five Dockerfiles, plus MongoDB, PostgreSQL and Kafka (upstream images). The pipeline has been running unattended since 2026-09-25.
 
 **Access:**
 - Map: http://157.90.113.98:3000/map
@@ -162,7 +180,7 @@ Leaflet map showing deviation markers (color-coded by severity) and bunching eve
 
 ### Phase 6 — Production Deployment
 
-Deployed on Hetzner CX23 via Docker Compose. Five Dockerfiles with multi-stage builds. MongoDB pinned to 7.0 (kernel 6.19 compat). Resource limits: Kafka 256MB heap, MongoDB 768MB cache (0.75 GB). UFW firewall (its actual scope is documented in the runbook). Running unattended since 2026-09-25. Observability is layered: a Healthchecks.io dead-man's switch on the poller (one ping per successful cycle — silence is the alarm) plus data-level alerts on matched-ping ratio (below 50% for 30 minutes) and hourly deviation volume vs the same hour last week, which is what would have caught the Nov 2026 matching-stage incident that a poller-only heartbeat missed.
+Deployed on Hetzner CX23 via Docker Compose: eight containers — the five app services built from this repo's five Dockerfiles (multi-stage builds), plus MongoDB, PostgreSQL and Kafka on upstream images. MongoDB pinned to 7.0 (kernel 6.19 compat). Resource limits: Kafka 256MB heap, MongoDB 768MB cache (0.75 GB). UFW firewall (its actual scope is documented in the runbook). Running unattended since 2026-09-25. Observability is layered: a Healthchecks.io dead-man's switch on the poller (one ping per successful cycle — silence is the alarm) plus data-level alerts on matched-ping ratio (below 50% for 30 minutes) and hourly deviation volume vs the same hour last week, which is what would have caught the Nov 2026 matching-stage incident that a poller-only heartbeat missed.
 
 Full runbook: [`docs/phase6-deployment-guide.md`](docs/phase6-deployment-guide.md)
 
@@ -180,12 +198,13 @@ These are deliberate, documented tradeoffs. Detailed explanations are in [`docs/
 - **Archive can contain duplicate lines after a crash.** The archive consumer commits Kafka offsets only after fsync; a crash in between redelivers the batch. At-least-once, same philosophy as above ([`docs/archive-consumer.md`](docs/archive-consumer.md)).
 - **Archive files are partitioned by write time, not event time.** Files are organized by when the message was archived (UTC), not when the vehicle moved. The PostgreSQL hourly stats bucket by arrival hour for the same reason.
 - **Plain HTTP on a public IP — deliberate demo-only choice.** The API surface is read-only public transit data behind Helmet/CORS/rate-limiting; real TLS would need a domain in front of it.
+- **Route lookups only know routes the stack has data for.** `/v1/routes/:id/...` resolves IDs case-insensitively against the route IDs seen in MongoDB/Postgres, then matches exactly. A valid GTFS route that has never produced a ping answers 404 (with a hint), and there is no alias table — MBTA's Silver Line is `741`–`749` in GTFS, not `SL1`.
 
 ## How to Run
 
 ### Local — Infrastructure in Docker, Services in Terminal
 
-This setup runs only Kafka and MongoDB as Docker containers, and the three application services (ingestion, API, analytics) as separate terminal processes. It's the best option for debugging: you get live logs in each terminal, can attach a debugger to any service, and restart a single service without waiting for a Docker build.
+This setup runs only Kafka and MongoDB as Docker containers, and the four application services (ingestion, API, analytics, archive) as separate terminal processes. It's the best option for debugging: you get live logs in each terminal, can attach a debugger to any service, and restart a single service without waiting for a Docker build.
 
 **Prerequisites:** Node.js 20+, Python 3.12+, [uv](https://docs.astral.sh/uv/), Docker.
 
@@ -282,9 +301,10 @@ curl http://localhost:3000/v1/status/live
 ## Repository Structure
 
 ```
-gtfs-realtime-stream-engine/
-├── docker-compose.yml            # Full stack: Kafka, MongoDB, ingestion, API, analytics
+Public-Transport-Telemetry/
+├── docker-compose.yml            # All eight containers: Kafka, MongoDB, PostgreSQL + five app services
 ├── README.md
+├── LICENSE                       # MIT
 │
 ├── ingestion-service/             # Phases 1, 2, 4, 5 — TypeScript
 │   ├── .env.example              # Required env vars (copy to .env)
@@ -343,10 +363,17 @@ gtfs-realtime-stream-engine/
 │   └── contracts/                  # Shared API↔schema contracts (enforced by both test suites)
 │
 ├── docs/
-│   ├── phases.md                 # Detailed phase documentation + ADRs
+│   ├── incidents/                  # 19 incident postmortems + index (Oct-Nov 2026)
+│   ├── retrospective.md            # Project retrospective: lessons and top incidents
+│   ├── phases.md                   # Detailed phase documentation + ADRs
 │   ├── phase6-deployment-guide.md  # Production deployment runbook
 │   ├── guarantees.md               # System guarantees: delivery, persistence, ordering
+│   ├── archive-consumer.md         # Archive + compaction tier: design and operations
+│   ├── analyticsEngineProcessingCycle.md  # How the analytics consumer loop works
+│   ├── kafkaIntegrationTestExplanation.md # Testcontainers Kafka round-trip test
+│   ├── number-flow-explained.md    # Why each layer shows different counts
 │   ├── multi-agency-vision.md      # Long-term: multi-agency platform + JWT
+│   ├── whole-fleet-map.md          # Design notes: show every vehicle, not just problems
 │   └── img/                        # Demo screenshots and GIFs
 │
 └── .github/
@@ -368,4 +395,10 @@ gtfs-realtime-stream-engine/
 | [`docs/kafkaIntegrationTestExplanation.md`](docs/kafkaIntegrationTestExplanation.md) | How the Kafka round-trip integration test works using testcontainers — spinning up a real broker, publishing, consuming, and verifying the message in CI. |
 | [`docs/number-flow-explained.md`](docs/number-flow-explained.md) | Why the stats panel, the API response, and the map show different counts — what each number represents and where it comes from in the pipeline. |
 | [`docs/multi-agency-vision.md`](docs/multi-agency-vision.md) | Long-term vision for turning the single-MBTA pipeline into a multi-agency platform with configurable connectors. |
-| [`docs/archive-consumer.md`](docs/archive-consumer.md) | Design, semantics, and operations for the Go archive consumer and the Python compaction tier — the second Kafka consumer group that writes raw messages to NDJSON.gz, plus the daily verify-then-delete Parquet compaction. |
+| [`docs/archive-consumer.md`](docs/archive-consumer.md) | Design, semantics, and operations for the Go archive consumer and the Python compaction tier — the second Kafka consumer group that writes raw messages to NDJSON.gz, plus the daily verify-then-delete Parquet compaction and its retention policy. |
+| [`docs/incidents/README.md`](docs/incidents/README.md) | Index of the 19 incident postmortems (2026-10-05 → 2026-11-08) — timeline, evidence, root cause, fix, and the alert that would have caught it, for every production incident. |
+| [`docs/retrospective.md`](docs/retrospective.md) | Project retrospective: what was learned, the three incidents worth retelling, and what would be done differently. |
+
+## License
+
+MIT — see [LICENSE](LICENSE).
