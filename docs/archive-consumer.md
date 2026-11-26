@@ -111,7 +111,9 @@ mkdir -p data/archive && sudo chown 10001:10001 data/archive
 `ARCHIVE_AUTO_OFFSET_RESET`.
 
 **Disk budget:** ~43MB/hour raw, ~150-250MB/day gzipped. On the 40GB Hetzner
-disk that is months of headroom. There is **no retention/pruning** yet.
+disk that is months of headroom. Both tiers are pruned by the compactor: raw
+files after verify-then-delete (grace `COMPACT_KEEP_RAW_DAYS`), compacted
+Parquet days after `PARQUET_KEEP_DAYS` — see the tiering section below.
 
 **Replay:** `zcat data/archive/*/*.ndjson.gz | jq ...` for analysis;
 re-publishing a day to Kafka is a small script over the raw lines (each line is
@@ -137,7 +139,9 @@ Design informed by two real archivers (researched 2026-10-07):
 - **Write-time partitioning**: files are organized by when the archive wrote
   the message, not when the vehicle moved. Fine for the main use case (rolling
   history); a problem only for event-time backfills.
-- **No retention policy**: files accumulate until disk says otherwise.
+- **Retention deletes, it does not offload**: `PARQUET_KEEP_DAYS` bounds both
+  tiers on disk, but a pruned day is gone unless it was offloaded to object
+  storage first (the standing recommendation from the disk-pressure incident).
 - **Single writer per directory**: one consumer process per `ARCHIVE_DIR`.
 
 ## Storage tiering: daily compaction to Parquet
@@ -183,7 +187,13 @@ Parquet rows == raw lines, *and* the Parquet output is older than
 verification). A verification failure keeps the raw tier intact and makes
 `--once` exit non-zero, so the raw NDJSON remains the safe copy.
 
+**Retention.** The compacted tier has no verify-then-delete step of its own —
+it grew ~90 MB/day with no bound until this policy landed. Each pass prunes
+`parquet/date=YYYY-MM-DD` dirs once the day turns `PARQUET_KEEP_DAYS` old
+(default 30; `0` = keep forever). Retention failure counts as a pass failure,
+because a silent skip is how a disk refills.
+
 **Running:** default loop mode (immediate pass on startup, then daily at
 ~03:00 UTC); `--once` for a single pass. Env: `ARCHIVE_DIR`,
-`COMPACT_MIN_AGE_HOURS`, `COMPACT_KEEP_RAW_DAYS`. See also `docs/guarantees.md`
-§8.
+`COMPACT_MIN_AGE_HOURS`, `COMPACT_KEEP_RAW_DAYS`, `PARQUET_KEEP_DAYS`. See
+also `docs/guarantees.md` §8.

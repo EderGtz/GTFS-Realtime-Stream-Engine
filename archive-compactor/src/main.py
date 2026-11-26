@@ -3,7 +3,8 @@
 Two modes:
 
   --once    One pass — compact every eligible day, then verify-then-delete any
-            day whose raw files are past their grace period — and exit. The
+            day whose raw files are past their grace period, then prune
+            compacted days past the Parquet retention window — and exit. The
             process status is non-zero if any day failed (so a scheduled job or
             an operator can react), zero otherwise.
   (default) Loop — run a pass immediately on startup (the design's "once on
@@ -13,7 +14,8 @@ Two modes:
 
 The compactor is file-I/O only: it reads the raw NDJSON.gz tree the Go consumer
 writes, folds complete days into Parquet, and (after verification + grace)
-removes the raw files it folded.
+removes the raw files it folded. Past-retention Parquet days are pruned last
+(retention.py) so the compacted tier's size stays bounded.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from datetime import UTC, datetime, timedelta
 from compact import VerificationError, compact_day, delete_raw_day
 from config import AppConfig
 from eligibility import PARQUET_DIR_NAME, PARQUET_DIR_PREFIX, eligible_days
+from retention import prune_parquet_days
 
 logger = logging.getLogger("archive-compactor")
 
@@ -96,6 +99,20 @@ def run_once(config: AppConfig, now: datetime) -> int:
             failures += 1
         except Exception:
             logger.exception("verify-then-delete failed for %s", day)
+            failures += 1
+
+    if config.parquet_keep_days > 0:
+        try:
+            for day in prune_parquet_days(
+                config.archive_dir, config.parquet_keep_days, now=now
+            ):
+                logger.info(
+                    "pruned parquet for %s (retention: %d days)",
+                    day,
+                    config.parquet_keep_days,
+                )
+        except Exception:
+            logger.exception("parquet retention failed")
             failures += 1
 
     return failures

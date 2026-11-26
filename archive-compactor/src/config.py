@@ -18,6 +18,10 @@ load_dotenv()
 #   7d  is the grace period before verified raw files are deleted (Task 11).
 DEFAULT_COMPACT_MIN_AGE_HOURS = 48
 DEFAULT_COMPACT_KEEP_RAW_DAYS = 7
+# Parquet retention (retention.py): bounded growth for the compacted tier.
+# ~90 MB/day measured in production, so 30 days plateaus at ~2.7 GB. 0 keeps
+# every compacted day forever.
+DEFAULT_PARQUET_KEEP_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -44,6 +48,10 @@ class AppConfig:
     # 0 = delete immediately after verification.
     compact_keep_raw_days: int
 
+    # Retention, in whole days, for compacted Parquet day dirs (retention.py).
+    # 0 disables pruning (keep forever).
+    parquet_keep_days: int
+
     @classmethod
     def from_env(cls) -> "AppConfig":
         """
@@ -56,5 +64,8 @@ class AppConfig:
             ),
             compact_keep_raw_days=int(
                 os.getenv("COMPACT_KEEP_RAW_DAYS", str(DEFAULT_COMPACT_KEEP_RAW_DAYS))
+            ),
+            parquet_keep_days=int(
+                os.getenv("PARQUET_KEEP_DAYS", str(DEFAULT_PARQUET_KEEP_DAYS))
             ),
         )
