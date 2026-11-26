@@ -42,6 +42,9 @@ export function initRouteSearch(): void {
     let historyDays = 7;
     /** Whether the history section is expanded. */
     let historyOpen = false;
+    /** Last raw query text, to show a "showing results for" hint when the
+     *  API canonicalized the route ID (e.g. `orange` -> `Orange`). */
+    let lastQuery = '';
 
     // --- Open / Close ---------------------------------------------------
 
@@ -112,7 +115,12 @@ export function initRouteSearch(): void {
         const b = data.bunching;
         const name = data.route_long_name || data.route_id;
 
-        let html = '<div class="route-perf-title">' + escapeHtml(name);
+        let html = '';
+        if (lastQuery && data.route_id.toLowerCase() !== lastQuery.toLowerCase()) {
+            html += '<div style="font-size:11px;color:#888;margin-bottom:4px">Showing results for <strong>' +
+                escapeHtml(data.route_id) + '</strong> (you searched: ' + escapeHtml(lastQuery) + ')</div>';
+        }
+        html += '<div class="route-perf-title">' + escapeHtml(name);
 
         if (d.count !== 0 || b.active_events !== 0) {
             html += ' <button class="perf-help-btn" title="What do these numbers mean?" ' +
@@ -221,6 +229,7 @@ export function initRouteSearch(): void {
             return;
         }
 
+        lastQuery = routeId;
         showLoading();
 
         try {
@@ -231,6 +240,8 @@ export function initRouteSearch(): void {
             if (err instanceof ApiError) {
                 if (err.status === 400) {
                     showError('Invalid route ID.');
+                } else if (err.status === 404) {
+                    showError('No route with that ID found. The search takes route IDs \u2014 try 1, 28, Red or Green-D \u2014 not vehicle IDs.');
                 } else {
                     showError('Server error (HTTP ' + err.status + ')');
                 }
@@ -264,8 +275,8 @@ export function initRouteSearch(): void {
         if (!content) return;
 
         if (!data.data_points || data.data_points.length === 0) {
-            content.innerHTML = '<div class="history-empty">No historical data yet. ' +
-                'The analytics engine needs to run for at least one hour to accumulate data.</div>';
+            content.innerHTML = '<div class="history-empty">No hourly history for this range yet \u2014 ' +
+                'data accumulates hour by hour while the pipeline runs.</div>';
             return;
         }
 
