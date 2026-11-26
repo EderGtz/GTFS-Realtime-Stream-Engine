@@ -1,13 +1,14 @@
 # Disk pressure: 84% on a 38 GB disk (two episodes)
 
-**Dates:** 2026-10-25 (79% → 63%), 2026-11-01 (84% → 70%) · **Severity:** SEV2 · **Status:** fixed; parquet retention still open
+**Dates:** 2026-10-25 (79% → 63%), 2026-11-01 (84% → 70%) · **Severity:** SEV2 · **Status:** fixed (parquet retention landed 2026-11-24)
 **Components:** Docker (build cache, volumes), Kafka segments, Mongo, parquet archive
 
 ## Summary
 
 Disk climbed into the 80%+ twice in a week. One-time bloat (build cache,
 orphaned volumes, retired images) plus four steady accumulators. Reclaimed to
-~70%; the parquet archive still grows ~100 MB/day with **no retention policy**.
+~70%; the parquet archive grew ~100 MB/day with **no retention policy** until
+one landed on 2026-11-24 (see Fix).
 
 ## Timeline
 
@@ -37,8 +38,13 @@ disk, plus repeat-build cache that only `docker builder prune` reclaims.
 ## Fix
 
 Prunes applied; Kafka segment bytes 256 MB; Mongo TTL; agent scratch cleaned.
-**Open:** parquet retention/offload policy (monthly offload to R2/B2, which
-also becomes the backup the external review wants).
+**Closed 2026-11-24:** parquet retention implemented — the compactor's daily
+pass now prunes `parquet/date=YYYY-MM-DD` days once they turn
+`PARQUET_KEEP_DAYS` old (default 30, `0` = keep forever; ~90 MB/day measured,
+so the tier plateaus at ~2.7 GB instead of growing forever). A retention
+failure fails the pass rather than logging past it. Monthly offload to R2/B2
+remains the recommendation for keeping pruned months: retention deletes, it
+does not back up.
 
 ## Alert that would have caught it
 

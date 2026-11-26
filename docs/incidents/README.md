@@ -27,8 +27,8 @@ Every file follows the same shape:
 | [2026-10-05-mongodb-missing-restart-policy.md](2026-10-05-mongodb-missing-restart-policy.md) | SEV1 (crash-loop after reboot) | fixed |
 | [2026-10-05-api-latency-missing-indexes.md](2026-10-05-api-latency-missing-indexes.md) | SEV2 (10 s searches) | fixed |
 | [2026-10-05-analytics-memory-blowup.md](2026-10-05-analytics-memory-blowup.md) | SEV2 (1.5 GB RSS on a 4 GB host) | fixed |
-| [2026-10-24-empty-history-scare.md](2026-10-24-empty-history-scare.md) | none (no data loss; UX bug) | UX fix open |
-| [2026-10-24-route-id-case-sensitivity.md](2026-10-24-route-id-case-sensitivity.md) | SEV3 (search returns 0) | **open** |
+| [2026-10-24-empty-history-scare.md](2026-10-24-empty-history-scare.md) | none (no data loss; UX bug) | fixed |
+| [2026-10-24-route-id-case-sensitivity.md](2026-10-24-route-id-case-sensitivity.md) | SEV3 (search returns 0) | fixed |
 | [2026-10-25-kafka-healthcheck-cpu-burn.md](2026-10-25-kafka-healthcheck-cpu-burn.md) | SEV2 (one core burned 24/7) | fixed |
 | [2026-10-25-kafka-data-in-container-layer.md](2026-10-25-kafka-data-in-container-layer.md) | SEV1 (latent wipe hazard) | fixed |
 | [2026-10-26-archive-consumer-zombie-outage.md](2026-10-26-archive-consumer-zombie-outage.md) | SEV1 (4-day silent outage) | fixed + backfilled |
@@ -38,7 +38,7 @@ Every file follows the same shape:
 | [2026-10-29-root-owned-scratch-files.md](2026-10-29-root-owned-scratch-files.md) | SEV3 (cleanup blocked) | fixed |
 | [2026-11-01-service-date-and-dst.md](2026-11-01-service-date-and-dst.md) | **SEV1 (silent data loss, 6 days)** | fixed |
 | [2026-11-01-mongo-unbounded-growth.md](2026-11-01-mongo-unbounded-growth.md) | SEV2 (disk growth ~30 MB/day) | fixed |
-| [2026-11-01-disk-pressure.md](2026-11-01-disk-pressure.md) | SEV2 (disk at 84%) | fixed; parquet retention still open |
+| [2026-11-01-disk-pressure.md](2026-11-01-disk-pressure.md) | SEV2 (disk at 84%) | fixed |
 | [2026-11-04-analytics-exdev-crashloop.md](2026-11-04-analytics-exdev-crashloop.md) | SEV1 (deploy crash-loop) | fixed |
 | [2026-11-04-bunching-false-positives.md](2026-11-04-bunching-false-positives.md) | SEV2 (bogus bunching numbers) | fixed |
 | [2026-11-05-monitoring-agent-outage.md](2026-11-05-monitoring-agent-outage.md) | SEV2 (monitoring blind) | fixed |
@@ -52,7 +52,11 @@ Every file follows the same shape:
   warns once per process). No fix needed.
 - **Kafka "94% CPU" (2026-10-09)**: transient JVM reporting quirk,
   self-resolved within hours.
-- **`gtfs_ingestion` prod app logs are swallowed** (`src/utils/logger.ts`
-  ships pino with `transport: { targets: [] }`): observability defect,
-  **open**. Kafkajs errors still surface on stdout, and container activity can
-  be verified via Kafka offsets.
+- **`gtfs_ingestion` prod app logs were swallowed** (`src/utils/logger.ts`
+  shipped pino with `transport: { targets: [] }`): observability defect,
+  **closed 2026-11-24**. Confirmed on the live stack before closing:
+  `docker logs gtfs_ingestion` showed only kafkajs errors (plain console) and
+  zero pino records, and `gtfs_api` — same logger — logged nothing at all.
+  Fixed by dropping the transport in production (pino writes NDJSON to stdout,
+  which `docker logs` captures) and adding json-file log rotation (10 MB × 3
+  files) in docker-compose, since the records now actually arrive.

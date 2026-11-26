@@ -1,6 +1,6 @@
 # "All history lost" scare: volumes intact, search takes route IDs
 
-**Date:** 2026-10-24 · **Severity:** none (no data loss) · **Status:** UX fix open
+**Date:** 2026-10-24 · **Severity:** none (no data loss; UX bug) · **Status:** fixed (2026-11-24)
 **Components:** frontend search UX, `gtfs_api`
 
 ## Summary
@@ -36,9 +36,21 @@ route stats before the hourly Postgres flush), which is by design.
 
 ## Fix
 
-No code fix yet. Recommended copy: "No route with that ID found: try a route
-ID like 1, 28, Red, Green-D", and disambiguate route search from vehicle
-search.
+Implemented 2026-11-24 (copy, as recommended, plus an API contract change):
+
+- `/v1/routes/:id/...` now returns **404 with a hint** for unknown route IDs
+  ("No route with that ID found. The search takes route IDs — try 1, 28, Red
+  or Green-D — not vehicle IDs."), so searching a vehicle ID answers the real
+  question instead of rendering an empty state that reads like data loss.
+- The empty-history state (route known, no rows in range) says so plainly:
+  "No hourly history for this range yet — data accumulates hour by hour while
+  the pipeline runs."
+- The search help panel states up front that the search takes route IDs, not
+  vehicle IDs.
+
+A side effect of the same change: case-insensitive route lookup
+(`2026-10-24-route-id-case-sensitivity.md`), which produced several of the
+"empty" reports behind this scare.
 
 ## Alert that would have caught it
 
