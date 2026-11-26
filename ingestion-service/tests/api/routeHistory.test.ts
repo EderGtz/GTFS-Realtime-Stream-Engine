@@ -176,3 +176,32 @@ describe('GET /v1/routes/:id/history', () => {
         expect(params).toEqual(['Red', '3']);
     });
 });
+
+describe('GET /v1/routes/:id/history — route ID resolution', () => {
+    test('canonicalizes the ID before querying and echoes the canonical ID', async () => {
+        const { pool, queryMock } = makeMockPool(sampleRows);
+        const resolve = vi.fn().mockResolvedValue('Orange');
+        const app = express();
+        app.use('/v1', createRouteHistoryRouter(pool, resolve));
+
+        const res = await request(app).get('/v1/routes/orange/history');
+
+        expect(res.status).toBe(200);
+        expect(res.body.route_id).toBe('Orange');
+        expect(queryMock.mock.calls[0]?.[1]?.[0]).toBe('Orange');
+    });
+
+    test('returns 404 with a hint for unknown route IDs, without querying', async () => {
+        const { pool, queryMock } = makeMockPool(sampleRows);
+        const resolve = vi.fn().mockResolvedValue(null);
+        const app = express();
+        app.use('/v1', createRouteHistoryRouter(pool, resolve));
+
+        const res = await request(app).get('/v1/routes/sl1/history');
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe('No route with that ID found');
+        expect(res.body.hint).toBeDefined();
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+});

@@ -2,6 +2,11 @@ import { Router } from 'express';
 import type { ApiCollections } from '../../db/connection.js';
 import type { RoutePerformanceResponse, RouteDeviationStats, RouteBunchingStats } from '../types.js';
 import { isValidRouteId } from '../validation.js';
+import {
+    identityResolver,
+    UNKNOWN_ROUTE_HINT,
+    type RouteResolver,
+} from '../routeCatalog.js';
 import { logger } from '../../utils/logger.js';
 
 /**
@@ -44,7 +49,10 @@ export function computeP95(sorted: number[]): number {
  * Uses MongoDB aggregation pipelines on the existing schedule_deviations
  * and bunching_events collections to compute route-level statistics.
  */
-export function createRoutePerformanceRouter(collections: ApiCollections): Router {
+export function createRoutePerformanceRouter(
+    collections: ApiCollections,
+    resolveRoute: RouteResolver = identityResolver,
+): Router {
     const router = Router();
 
     router.get('/routes/:id/performance', async (req, res, next) => {
@@ -56,6 +64,16 @@ export function createRoutePerformanceRouter(collections: ApiCollections): Route
                 res.status(400).json({ error: 'Invalid route ID format' });
                 return;
             }
+
+            const canonicalId = await resolveRoute(routeId);
+            if (canonicalId === null) {
+                res.status(404).json({
+                    error: 'No route with that ID found',
+                    hint: UNKNOWN_ROUTE_HINT,
+                });
+                return;
+            }
+
             const cutoff = new Date(Date.now() - LIVE_WINDOW_MS);
 
             const [deviationPipeline, bunchingPipeline] = await Promise.all([
@@ -70,7 +88,7 @@ export function createRoutePerformanceRouter(collections: ApiCollections): Route
                 collections.deviations.aggregate([
                     {
                         $match: {
-                            route_id: routeId,
+                            route_id: canonicalId,
                             actual_at: { $gte: cutoff },
                         },
                     },
@@ -102,7 +120,7 @@ export function createRoutePerformanceRouter(collections: ApiCollections): Route
                 collections.bunching.aggregate([
                     {
                         $match: {
-                            route_id: routeId,
+                            route_id: canonicalId,
                             end_time: { $gte: cutoff },
                         },
                     },
@@ -168,7 +186,7 @@ export function createRoutePerformanceRouter(collections: ApiCollections): Route
 
             // --- Build response ---
             const response: RoutePerformanceResponse = {
-                route_id: routeId,
+                route_id: canonicalId,
                 route_long_name: routeLongName,
                 period: 'current',
                 deviation,
@@ -177,7 +195,7 @@ export function createRoutePerformanceRouter(collections: ApiCollections): Route
 
             logger.info(
                 {
-                    route_id: routeId,
+                    route_id: canonicalId,
                     deviation_count: deviation.count,
                     bunching_count: bunching.active_events,
                     duration_ms: Date.now() - start,

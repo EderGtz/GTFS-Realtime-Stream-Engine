@@ -10,6 +10,7 @@ import { createStatusRouter } from './routes/status.js';
 import { createPipelineStatusRouter } from './routes/pipelineStatus.js';
 import { createRoutePerformanceRouter } from './routes/routePerformance.js';
 import { createRouteHistoryRouter } from './routes/routeHistory.js';
+import { createRouteResolver } from './routeCatalog.js';
 import { logger } from '../utils/logger.js';
 import type { ApiCollections } from '../db/connection.js';
 
@@ -22,6 +23,10 @@ import type { ApiCollections } from '../db/connection.js';
  */
 export function createApp(collections?: ApiCollections, pgPool?: pg.Pool): express.Express {
     const app = express();
+
+    // Case-insensitive route-ID lookup shared by both /v1/routes/:id/...
+    // endpoints; built once here so both see the same cached catalog.
+    const resolveRoute = createRouteResolver({ collections, pgPool });
 
     app.set('trust proxy', 0);
     app.use(compression());
@@ -74,12 +79,12 @@ export function createApp(collections?: ApiCollections, pgPool?: pg.Pool): expre
     if (collections) {
         app.use('/v1', createStatusRouter(collections));
         app.use('/v1', createPipelineStatusRouter(collections));
-        app.use('/v1', createRoutePerformanceRouter(collections));
+        app.use('/v1', createRoutePerformanceRouter(collections, resolveRoute));
     }
 
     // History route — only when PostgreSQL pool is available
     if (pgPool) {
-        app.use('/v1', createRouteHistoryRouter(pgPool));
+        app.use('/v1', createRouteHistoryRouter(pgPool, resolveRoute));
     }
 
     app.use(errorHandler);

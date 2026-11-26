@@ -434,14 +434,22 @@ describeIfDocker('API Integration: /v1/routes/:id/performance', () => {
         expect(res.body.bunching.worst_distance_meters).toBeCloseTo(50.0, 1);
     });
 
-    test('returns zero stats for a route that does not exist', async () => {
+    // Unknown route IDs 404 with a hint (the 2026-10-24 case-sensitivity /
+    // empty-history fix): a route the stack has no data for is "not found",
+    // not a zeroed card that reads like data loss.
+    test('returns 404 with a hint for a route that does not exist', async () => {
         const res = await request(app).get('/v1/routes/nonexistent/performance');
 
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe('No route with that ID found');
+        expect(res.body.hint).toContain('route IDs');
+    });
+
+    test('resolves route IDs case-insensitively against real data', async () => {
+        const res = await request(app).get('/v1/routes/shuttle/performance');
+
         expect(res.status).toBe(200);
-        expect(res.body.deviation.count).toBe(0);
-        expect(res.body.deviation.avg_seconds).toBe(0);
-        expect(res.body.bunching.active_events).toBe(0);
-        expect(res.body.bunching.worst_distance_meters).toBeNull();
+        expect(res.body.route_id).toBe('SHUTTLE');
     });
 
     test('route_long_name comes from deviation documents', async () => {

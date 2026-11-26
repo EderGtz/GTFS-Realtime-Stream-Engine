@@ -13,15 +13,27 @@ import { computeP95 } from '../../src/api/routes/routePerformance.js';
 // --- Helpers -----------------------------------------------------------
 
 /**
+ * Route IDs the mocked catalog reports as known: the resolver treats these
+ * as existing routes (they reach the aggregation layer), anything else gets
+ * the unknown-route 404. It mirrors the real catalog (routeCatalog.ts) built
+ * from the route_ids the stack has data for.
+ */
+const KNOWN_ROUTE_IDS = [
+    '1', '28', 'Red', 'Green-D', 'route 28', '$injection', 'ghost', 'nonexistent',
+];
+
+/**
  * Mock MongoDB collection whose aggregate() returns pre-computed results.
  * The route handler calls collection.aggregate([...]).toArray(),
- * so we return a cursor-like object with toArray().
+ * so we return a cursor-like object with toArray(). distinct() feeds the
+ * route catalog used for case-insensitive resolution.
  */
 function mockAggregateCollection(pipelineResult: unknown[]) {
     return {
         aggregate: vi.fn().mockReturnValue({
             toArray: vi.fn().mockResolvedValue(pipelineResult),
         }),
+        distinct: vi.fn().mockResolvedValue(KNOWN_ROUTE_IDS),
     };
 }
 
@@ -287,5 +299,25 @@ describe('GET /v1/routes/:id/performance', () => {
         const res = await request(app).get('/v1/routes/1/performance');
 
         expect(res.body.deviation.vehicles_on_time_pct).toBe(33.3);
+    });
+
+    // Canonicalization: user-facing lookups are case-insensitive at the API
+    // edge (routeCatalog.ts), while the queries stay exact-match. Unknown
+    // IDs 404 with a hint instead of returning a misleading empty result.
+    test('canonicalizes route IDs case-insensitively', async () => {
+        const app = appWithAggregations(seededDeviationResult, seededBunchingResult);
+        const res = await request(app).get('/v1/routes/red/performance');
+
+        expect(res.status).toBe(200);
+        expect(res.body.route_id).toBe('Red');
+    });
+
+    test('returns 404 with a hint for unknown route IDs', async () => {
+        const app = appWithAggregations(seededDeviationResult, seededBunchingResult);
+        const res = await request(app).get('/v1/routes/sl1/performance');
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe('No route with that ID found');
+        expect(res.body.hint).toContain('route IDs');
     });
 });

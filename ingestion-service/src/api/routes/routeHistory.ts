@@ -2,6 +2,11 @@ import { Router } from 'express';
 import type pg from 'pg';
 import type { RouteHistoryResponse, HourlyDataPoint } from '../types.js';
 import { isValidRouteId } from '../validation.js';
+import {
+    identityResolver,
+    UNKNOWN_ROUTE_HINT,
+    type RouteResolver,
+} from '../routeCatalog.js';
 import { logger } from '../../utils/logger.js';
 
 const DEFAULT_DAYS = 7;
@@ -15,8 +20,15 @@ const MAX_DAYS = 90;
  * Queries the route_hourly_stats table written by the analytics engine's
  * HourlyAccumulator + PgWriter. Returns hourly punctuality trend data
  * for the requested route over the last N days.
+ *
+ * `resolveRoute` canonicalizes the incoming ID (case-insensitive) and
+ * identifies unknown IDs so they get a 404 instead of a silently empty
+ * result — see routeCatalog.ts. Defaults to identity passthrough.
  */
-export function createRouteHistoryRouter(pgPool: pg.Pool): Router {
+export function createRouteHistoryRouter(
+    pgPool: pg.Pool,
+    resolveRoute: RouteResolver = identityResolver,
+): Router {
     const router = Router();
 
     router.get('/routes/:id/history', async (req, res, next) => {
@@ -26,6 +38,15 @@ export function createRouteHistoryRouter(pgPool: pg.Pool): Router {
 
             if (!isValidRouteId(routeId)) {
                 res.status(400).json({ error: 'Invalid route ID format' });
+                return;
+            }
+
+            const canonicalId = await resolveRoute(routeId);
+            if (canonicalId === null) {
+                res.status(404).json({
+                    error: 'No route with that ID found',
+                    hint: UNKNOWN_ROUTE_HINT,
+                });
                 return;
             }
 
@@ -41,7 +62,7 @@ export function createRouteHistoryRouter(pgPool: pg.Pool): Router {
                  WHERE route_id = $1
                    AND hour >= NOW() - ($2 || ' days')::interval
                  ORDER BY hour ASC`,
-                [routeId, days.toString()],
+                [canonicalId, days.toString()],
             );
 
             const dataPoints: HourlyDataPoint[] = result.rows.map((row) => ({
@@ -54,14 +75,14 @@ export function createRouteHistoryRouter(pgPool: pg.Pool): Router {
             }));
 
             const response: RouteHistoryResponse = {
-                route_id: routeId,
+                route_id: canonicalId,
                 days,
                 data_points: dataPoints,
             };
 
             logger.info(
                 {
-                    route_id: routeId,
+                    route_id: canonicalId,
                     days,
                     data_points: dataPoints.length,
                     duration_ms: Date.now() - start,
