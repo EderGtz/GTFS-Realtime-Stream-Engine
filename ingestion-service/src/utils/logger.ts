@@ -31,12 +31,14 @@ if (!isProd) {
     });
 }
 
-export const logger = pino({
-    level: 
-    process.env.LOG_LEVEL || 
+const options: pino.LoggerOptions = {
+    level:
+    process.env.LOG_LEVEL ||
     (process.env.NODE_ENV === 'test' ? 'silent' : 'info'),
-    
-    transport: {
-        targets,
-    },
-});
+};
+
+if (targets.length > 0) {
+    options.transport = { targets };
+}
+
+export const logger = pino(options);
