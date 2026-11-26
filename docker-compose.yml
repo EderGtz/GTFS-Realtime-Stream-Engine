@@ -1,5 +1,14 @@
 name: GTFS-streaming
 
+# Every container's stdout lands in docker's json-file log. Left at the
+# default it grows without bound (the app logs used to be swallowed by a pino
+# misconfig, so this never bit; with that fixed, rotation is part of the fix).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-common-env: &common-env
   KAFKA_BROKER: ${KAFKA_BROKER}
   MONGO_URI: ${MONGO_URI}
@@ -13,6 +22,7 @@ services:
     image: mongo:7.0
     container_name: gtfs_mongodb
     restart: unless-stopped
+    logging: *default-logging
     command: ["mongod", "--wiredTigerCacheSizeGB", "0.75"]
     ports:
       - "127.0.0.1:${MONGO_PORT:-27017}:27017"
@@ -29,6 +39,7 @@ services:
     image: postgres:16-alpine
     container_name: gtfs_postgres
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "127.0.0.1:${PG_PORT:-5432}:5432"
     environment:
@@ -50,6 +61,7 @@ services:
     container_name: gtfs_kafka
     hostname: kafka
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
     environment:
@@ -99,6 +111,7 @@ services:
       dockerfile: Dockerfile
     container_name: gtfs_ingestion
     restart: unless-stopped
+    logging: *default-logging
     cap_drop: [ALL]
     read_only: true
     tmpfs:
@@ -119,6 +132,7 @@ services:
       dockerfile: Dockerfile.api
     container_name: gtfs_api
     restart: unless-stopped
+    logging: *default-logging
     cap_drop: [ALL]
     read_only: true
     tmpfs:
@@ -146,6 +160,7 @@ services:
       dockerfile: Dockerfile
     container_name: gtfs_analytics
     restart: unless-stopped
+    logging: *default-logging
     # a GTFS-static reload holds old and new lookups at once
     # (measured peak RSS ~1.15 GB vs ~0.7 GB for a single load), and the
     # service-date reload now runs daily. Columnar lookups are the long-term
@@ -179,6 +194,7 @@ services:
       dockerfile: Dockerfile
     container_name: gtfs_archive
     restart: unless-stopped
+    logging: *default-logging
     mem_limit: 256m
     cap_drop: [ALL]
     read_only: true
@@ -209,17 +225,21 @@ services:
       dockerfile: Dockerfile
     container_name: gtfs_archive_compactor
     restart: unless-stopped
+    logging: *default-logging
     mem_limit: 256m
     # M5: no capabilities, read-only root FS — compacted parquet goes to the
     # bind mount (exempt from read_only) and scratch to tmpfs /tmp.
     cap_drop: [ALL]
     read_only: true
+    user: "10001:10001"
     tmpfs:
       - /tmp
     environment:
       ARCHIVE_DIR: /data/archive
       COMPACT_MIN_AGE_HOURS: "48"
       COMPACT_KEEP_RAW_DAYS: "7"
+      # Parquet retention: prune compacted days older than this (0 = keep forever)
+      PARQUET_KEEP_DAYS: "30"
     volumes:
       - ./data/archive:/data/archive
     depends_on:
