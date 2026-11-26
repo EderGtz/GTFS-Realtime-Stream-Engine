@@ -24,8 +24,8 @@ export const UNKNOWN_ROUTE_HINT =
     'Try a route ID like 1, 28, Red or Green-D. This search takes route IDs, not vehicle IDs.';
 
 export interface RouteResolverSources {
-    collections?: ApiCollections;
-    pgPool?: pg.Pool;
+    collections?: ApiCollections | undefined;
+    pgPool?: pg.Pool | undefined;
 }
 
 export function createRouteResolver(sources: RouteResolverSources): RouteResolver {
